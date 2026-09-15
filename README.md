@@ -81,6 +81,10 @@ docker compose exec app php artisan db:restore <файл> --force # восста
 
 `/api/telegram/webhook` (300 запросов/мин по IP) и `/api/v1/*` (60/мин, по `X-Internal-Api-Key`, не по IP — разные клиенты Internal API не делят один бюджет) — throttle стоит первым в цепочке middleware, до проверки секрета/ключа, так что режет объём независимо от того, прошла аутентификация или нет. Лимиты щедрые (не мешают легитимным всплескам), настроены в `AppServiceProvider::boot()`.
 
+## Очистка (prune)
+
+`php artisan model:prune` удаляет истёкшие `pending_inputs`/`order_drafts` (`expires_at` в прошлом) и `telegram_updates` старше 7 дней (Prunable-модели, см. `app/Models`). Запланирован ежедневно в 03:15, сразу после `db:backup` — бэкап снимается до чистки, не после.
+
 ## Прод-чеклист
 
 Перед тем как пускать реальный поток заказов:

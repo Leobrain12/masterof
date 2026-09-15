@@ -16,3 +16,7 @@ Schedule::command('db:backup')->dailyAt('03:00')->onOneServer();
 
 // ТЗ п.104 — мониторинг вебхука и очереди, алерт владельцу при проблеме.
 Schedule::command('system:health-check')->everyFifteenMinutes()->onOneServer();
+
+// Чистит telegram_updates/pending_inputs/order_drafts (см. Prunable-модели) —
+// без этого таблицы растут бесконечно. После db:backup — бэкап снят до чистки.
+Schedule::command('model:prune')->dailyAt('03:15')->onOneServer();

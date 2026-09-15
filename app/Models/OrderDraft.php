@@ -3,13 +3,15 @@
 namespace App\Models;
 
 use App\Enums\OrderDraftStep;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Concerns\HasUuids;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Prunable;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class OrderDraft extends Model
 {
-    use HasUuids;
+    use HasUuids, Prunable;
 
     public $incrementing = false;
 
@@ -34,6 +36,17 @@ class OrderDraft extends Model
     public function isExpired(): bool
     {
         return $this->expires_at->isPast();
+    }
+
+    /**
+     * Черновик после истечения уже подчищается лениво при следующем обращении
+     * того же пользователя (см. OrderDraftFlow), но если пользователь так и не
+     * вернулся — запись висит вечно. Модель подхватывается автообнаружением
+     * `model:prune` (см. routes/console.php).
+     */
+    public function prunable(): Builder
+    {
+        return static::query()->where('expires_at', '<=', now());
     }
 
     public function get(string $key, mixed $default = null): mixed
