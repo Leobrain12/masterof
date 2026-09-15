@@ -25,6 +25,11 @@ class OrderStatusMachine
      */
     private const ALLOWED = [
         'NEW' => ['ASSIGNED'],
+        // Гарантийное обращение (ТЗ п.64) создаётся сразу с мастером и слотом
+        // (WarrantyReturnFlow) — тот же паттерн, что у обычной заявки в
+        // OrderDraftFlow: NEW/WARRANTY_RETURN существуют как статус ровно на
+        // миг между созданием и немедленным назначением.
+        'WARRANTY_RETURN' => ['ASSIGNED'],
         'ASSIGNED' => ['ACCEPTED', 'MASTER_DECLINED'],
         'MASTER_DECLINED' => ['ASSIGNED'],
         'ACCEPTED' => ['ON_THE_WAY', 'NO_CONTACT'],

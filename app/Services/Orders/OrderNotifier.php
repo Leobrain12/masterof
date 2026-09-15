@@ -189,6 +189,13 @@ class OrderNotifier
                 ['text' => '💵 Частично', 'callback_data' => "order:pay_partial:{$order->number}"],
             ], [
                 ['text' => '❌ Не оплачено', 'callback_data' => "order:pay_none:{$order->number}"],
+            ], [
+                // Кнопка живёт на этом сообщении сколько угодно — Telegram не гасит
+                // inline-клавиатуры старых сообщений, а гарантийное обращение может
+                // возникнуть недели спустя (ТЗ п.64: "Администратор: [Создать
+                // гарантийное обращение]" — то же действие доступно и по номеру
+                // заявки через order:warranty:{number}, не только с этой карточки).
+                ['text' => '🔧 Гарантия', 'callback_data' => "order:warranty:{$order->number}"],
             ]],
         ]);
     }
@@ -196,6 +203,19 @@ class OrderNotifier
     public function paymentRecorded(Order $order, string $summary): void
     {
         $this->broadcastToAdmins("Оплата по заявке {$order->code()}: {$summary}.");
+    }
+
+    /**
+     * ТЗ п.64/п.82 — "возникло гарантийное обращение" входит в список событий,
+     * о которых уведомляется администратор.
+     */
+    public function warrantyCreated(Order $warranty, Order $parent): void
+    {
+        $this->broadcastToAdmins(
+            "Гарантийное обращение {$warranty->code()} создано по заявке {$parent->code()}.\n".
+            "Проблема: {$warranty->symptom}\n".
+            "Мастер: {$warranty->master->name}"
+        );
     }
 
     private function orderCard(Order $order): string

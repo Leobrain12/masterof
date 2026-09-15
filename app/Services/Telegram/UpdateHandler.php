@@ -22,6 +22,7 @@ use App\Services\Orders\PartRequestFlow;
 use App\Services\Orders\PaymentFlow;
 use App\Services\Orders\PriceApprovalFlow;
 use App\Services\Orders\StatsFlow;
+use App\Services\Orders\WarrantyReturnFlow;
 use App\Services\Orders\WorkReportFlow;
 
 /**
@@ -54,6 +55,7 @@ class UpdateHandler
         private readonly MediaCollectionFlow $mediaFlow,
         private readonly MediaViewer $mediaViewer,
         private readonly StatsFlow $statsFlow,
+        private readonly WarrantyReturnFlow $warrantyFlow,
     ) {}
 
     /**
@@ -138,6 +140,7 @@ class UpdateHandler
                 'work_report' => $this->workReportFlow->handle($user, $pending, $chatId, $text, null),
                 'payment_partial' => $this->paymentFlow->handlePartialAmountText($user, $chatId, $pending, $text),
                 'stats_period' => $this->statsFlow->handleCustomText($user, $chatId, $pending, $text),
+                'warranty_return' => $this->warrantyFlow->handle($user, $pending, $chatId, $text, null),
                 default => $pending->delete(),
             };
 
@@ -258,6 +261,16 @@ class UpdateHandler
             return;
         }
 
+        if ($namespace === 'warranty') {
+            $pending = $this->requirePending($user, 'warranty_return', $chatId, 'Сценарий гарантийного обращения истёк. Начни заново — кнопка «Гарантия».');
+
+            if ($pending) {
+                $this->warrantyFlow->handle($user, $pending, $chatId, null, substr($data, strlen('warranty:')));
+            }
+
+            return;
+        }
+
         if ($namespace === 'media') {
             $pending = $this->requirePending($user, 'media_collection', $chatId, 'Сценарий добавления медиа истёк. Начни заново.');
 
@@ -327,6 +340,7 @@ class UpdateHandler
             'pay_none' => $user->role->isAdminLike() ? $this->paymentFlow->markUnpaid($user, $chatId, $orderNumber) : null,
             'add_media' => $this->mediaFlow->start($user, $chatId, $orderNumber),
             'view_media' => $this->mediaViewer->show($user, $chatId, $orderNumber),
+            'warranty' => $user->role->isAdminLike() ? $this->warrantyFlow->start($user, $chatId, $orderNumber) : null,
             default => null,
         };
     }

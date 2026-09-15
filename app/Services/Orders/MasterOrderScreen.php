@@ -42,7 +42,7 @@ class MasterOrderScreen
         }
 
         $orders = Order::query()
-            ->with(['applianceType', 'brand', 'master'])
+            ->with(['applianceType', 'brand', 'master', 'warrantyParent'])
             ->where('master_id', $master->id)
             ->whereIn('status', array_map(fn (OrderStatus $s) => $s->value, self::ACTIVE_STATUSES))
             ->orderBy('visit_date')

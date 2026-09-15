@@ -23,6 +23,10 @@ class OrderCardFormatter
             'Мастер: '.($order->master->name ?? '—'),
         ];
 
+        if ($order->warranty_parent_order_id && $order->warrantyParent) {
+            $lines[] = "🔧 Гарантия по {$order->warrantyParent->code()}";
+        }
+
         $photos = $order->media()->where('media_type', MediaType::PHOTO->value)->count();
         $videos = $order->media()->where('media_type', MediaType::VIDEO->value)->count();
 

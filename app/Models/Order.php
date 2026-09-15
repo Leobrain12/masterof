@@ -18,7 +18,7 @@ class Order extends Model
     protected $keyType = 'string';
 
     protected $fillable = [
-        'lead_id', 'crm_id', 'source',
+        'lead_id', 'crm_id', 'warranty_parent_order_id', 'source',
         'customer_name', 'customer_phone',
         'appliance_type_id', 'brand_id', 'model', 'symptom', 'description',
         'address', 'geo_zone_id', 'address_lat', 'address_lon',
@@ -75,6 +75,23 @@ class Order extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    /**
+     * Исходный заказ, по которому оформлено это гарантийное обращение (ТЗ п.64.2).
+     * null для обычных заказов.
+     */
+    public function warrantyParent(): BelongsTo
+    {
+        return $this->belongsTo(Order::class, 'warranty_parent_order_id');
+    }
+
+    /**
+     * Гарантийные обращения, оформленные по ЭТОМУ заказу.
+     */
+    public function warrantyReturns(): HasMany
+    {
+        return $this->hasMany(Order::class, 'warranty_parent_order_id');
     }
 
     public function statusHistory(): HasMany

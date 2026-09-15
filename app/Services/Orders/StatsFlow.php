@@ -144,7 +144,7 @@ class StatsFlow
             "Средний чек: {$s['avg_check']} ₽",
             "Себестоимость деталей: {$s['parts_cost']} ₽",
             "Выплата мастеру: {$s['master_payout']} ₽",
-            "Гарантийных: 0",
+            "Гарантийных: {$s['warranty']}",
         ];
 
         $this->telegram->sendMessage($chatId, implode("\n", $lines));
@@ -163,6 +163,8 @@ class StatsFlow
             "Отказов клиента: {$overall['customer_cancelled']}",
             "Отказов мастеров: {$overall['master_declines']}",
             "Ожидают деталь: {$overall['waiting_parts']}",
+            'Гарантийных: '.$overall['warranty_orders'].
+                ($overall['warranty_rate'] !== null ? " ({$overall['warranty_rate']}%)" : ''),
         ];
 
         $this->telegram->sendMessage($chatId, implode("\n", $lines));

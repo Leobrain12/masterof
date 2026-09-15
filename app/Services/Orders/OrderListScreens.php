@@ -39,7 +39,7 @@ class OrderListScreens
     public function unassigned(int $chatId): void
     {
         $orders = Order::query()
-            ->with(['applianceType', 'brand', 'master'])
+            ->with(['applianceType', 'brand', 'master', 'warrantyParent'])
             ->whereIn('status', [OrderStatus::NEW->value, OrderStatus::MASTER_DECLINED->value])
             ->orderBy('created_at')
             ->limit(self::LIMIT)
@@ -65,7 +65,7 @@ class OrderListScreens
     public function active(int $chatId): void
     {
         $orders = Order::query()
-            ->with(['applianceType', 'brand', 'master'])
+            ->with(['applianceType', 'brand', 'master', 'warrantyParent'])
             ->whereNotIn('status', self::CLOSED_OR_UNASSIGNED_STATUSES)
             ->orderBy('visit_date')
             ->limit(self::LIMIT)

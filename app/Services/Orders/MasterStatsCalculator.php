@@ -17,6 +17,10 @@ use Carbon\CarbonInterface;
  * "исчезал" бы из статистики того, кто отказался. "Выполнено"/"выручка" —
  * наоборот, по ТЕКУЩЕЙ привязке заказа к мастеру: если исполнил — считается
  * за ним, даже если до этого заказ побывал у кого-то другого.
+ *
+ * ТЗ п.65: гарантийные обращения исключены из всех обычных коммерческих
+ * счётчиков (assigned/accepted/declined/completed/revenue/...) — считаются
+ * отдельно в `warranty`, тем же принципом, что и в OrderStatsCalculator.
  */
 class MasterStatsCalculator
 {
@@ -25,7 +29,7 @@ class MasterStatsCalculator
      *     assigned: int, accepted: int, declined: int, completed: int, paid: int,
      *     customer_cancelled: int, rescheduled: int,
      *     revenue: int, avg_check: int, parts_cost: int, master_payout: int,
-     *     completion_rate: ?int, decline_rate: ?int,
+     *     completion_rate: ?int, decline_rate: ?int, warranty: int,
      * }
      */
     public function calculate(Master $master, CarbonInterface $from, CarbonInterface $to): array
@@ -35,7 +39,7 @@ class MasterStatsCalculator
         $assigned = OrderStatusHistory::query()
             ->whereBetween('created_at', [$from, $to])
             ->where('new_status', 'ASSIGNED')
-            ->whereHas('order', fn ($q) => $q->where('master_id', $master->id))
+            ->whereHas('order', fn ($q) => $q->where('master_id', $master->id)->whereNull('warranty_parent_order_id'))
             ->distinct('order_id')
             ->count('order_id');
 
@@ -43,6 +47,7 @@ class MasterStatsCalculator
             ->whereBetween('created_at', [$from, $to])
             ->where('new_status', 'ACCEPTED')
             ->where('changed_by_user_id', $userId)
+            ->whereHas('order', fn ($q) => $q->whereNull('warranty_parent_order_id'))
             ->distinct('order_id')
             ->count('order_id');
 
@@ -50,24 +55,26 @@ class MasterStatsCalculator
             ->whereBetween('created_at', [$from, $to])
             ->where('new_status', 'MASTER_DECLINED')
             ->where('changed_by_user_id', $userId)
+            ->whereHas('order', fn ($q) => $q->whereNull('warranty_parent_order_id'))
             ->distinct('order_id')
             ->count('order_id');
 
         $customerCancelled = OrderStatusHistory::query()
             ->whereBetween('created_at', [$from, $to])
             ->where('new_status', 'CUSTOMER_CANCELLED')
-            ->whereHas('order', fn ($q) => $q->where('master_id', $master->id))
+            ->whereHas('order', fn ($q) => $q->where('master_id', $master->id)->whereNull('warranty_parent_order_id'))
             ->distinct('order_id')
             ->count('order_id');
 
         $rescheduled = OrderStatusHistory::query()
             ->whereBetween('created_at', [$from, $to])
             ->where('comment', 'like', 'Перенос:%')
-            ->whereHas('order', fn ($q) => $q->where('master_id', $master->id))
+            ->whereHas('order', fn ($q) => $q->where('master_id', $master->id)->whereNull('warranty_parent_order_id'))
             ->count();
 
         $finishedIds = Order::query()
             ->where('master_id', $master->id)
+            ->whereNull('warranty_parent_order_id')
             ->whereIn('status', ['COMPLETED', 'PAID'])
             ->whereBetween('completed_at', [$from, $to])
             ->pluck('id');
@@ -78,6 +85,13 @@ class MasterStatsCalculator
         $partsCost = (int) Order::query()->whereIn('id', $finishedIds)->sum('parts_cost');
         $masterPayout = (int) Order::query()->whereIn('id', $finishedIds)->sum('master_payout');
         $avgCheck = $completed > 0 ? intdiv($revenue, $completed) : 0;
+
+        $warranty = Order::query()
+            ->where('master_id', $master->id)
+            ->whereNotNull('warranty_parent_order_id')
+            ->whereIn('status', ['COMPLETED', 'PAID'])
+            ->whereBetween('completed_at', [$from, $to])
+            ->count();
 
         return [
             'assigned' => $assigned,
@@ -93,6 +107,7 @@ class MasterStatsCalculator
             'master_payout' => $masterPayout,
             'completion_rate' => $accepted > 0 ? (int) round($completed / $accepted * 100) : null,
             'decline_rate' => $assigned > 0 ? (int) round($declined / $assigned * 100) : null,
+            'warranty' => $warranty,
         ];
     }
 }

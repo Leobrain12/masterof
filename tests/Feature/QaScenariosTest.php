@@ -22,10 +22,10 @@ use Tests\TestCase;
  * прогоняются через настоящий webhook-эндпоинт, а не напрямую через сервисы,
  * чтобы проверять систему так же, как её будет проверять живой Telegram-апдейт.
  *
- * Сценарии 6 (гарантийный возврат) и 7 (CRM недоступна) физически нечем
- * тестировать — обе фичи осознанно не реализованы в этом проходе (см.
- * vault/Открытые вопросы.md и vault/Фазы/Фаза 03). Тест на них будет написан
- * вместе с самой фичей, а не раньше.
+ * Все 10 реализованы. Сценарии 6 (гарантийный возврат, см.
+ * WarrantyReturnFlow) и 7 (CRM недоступна, см. SyncOrderToCrm) дольше всех
+ * оставались за скобками MVP — тесты на них дописаны вместе с самими фичами,
+ * не раньше (см. vault/Backlog).
  */
 class QaScenariosTest extends TestCase
 {
@@ -298,19 +298,100 @@ class QaScenariosTest extends TestCase
     }
 
     /**
-     * Сценарий 6 (гарантийный возврат) — не реализовано, см. класс-докблок.
+     * Сценарий 6: ремонт → гарантийный возврат. Полный визард через настоящий
+     * вебхук — кнопка на карточке завершения, а не прямой вызов сервиса.
      */
-    public function test_scenario_06_warranty_return_not_implemented(): void
+    public function test_scenario_06_completed_repair_gets_warranty_return(): void
     {
-        $this->markTestSkipped('Гарантийный заказ (WARRANTY_RETURN) сознательно отложен — см. vault/Открытые вопросы.md.');
+        $admin = User::factory()->admin()->create(['telegram_user_id' => 90601]);
+        $masterUser = User::factory()->master()->create(['telegram_user_id' => 90602]);
+        $master = Master::factory()->for($masterUser)->create();
+        $fridge = ApplianceType::where('name', 'Холодильник')->firstOrFail();
+        $master->applianceTypes()->attach($fridge->id);
+        $order = $this->makeOrderAtStatus($admin, $master, OrderStatus::COMPLETED);
+        $order->update(['final_price' => 3000]);
+        $slot = TimeSlot::first();
+
+        $this->sendUpdate($this->callbackUpdate($admin->telegram_user_id, "order:warranty:{$order->number}"));
+        $this->sendUpdate($this->messageUpdate($admin->telegram_user_id, 'Опять не морозит'));
+        $this->sendUpdate($this->callbackUpdate($admin->telegram_user_id, 'warranty:skip'));
+        $this->sendUpdate($this->callbackUpdate($admin->telegram_user_id, 'warranty:date:tomorrow'));
+        $this->sendUpdate($this->callbackUpdate($admin->telegram_user_id, "warranty:slot:{$slot->id}"));
+        $this->sendUpdate($this->callbackUpdate($admin->telegram_user_id, "warranty:master:{$master->id}"));
+
+        $warranty = Order::query()->where('warranty_parent_order_id', $order->id)->first();
+
+        $this->assertNotNull($warranty);
+        $this->assertSame(OrderStatus::ASSIGNED, $warranty->status);
+        $this->assertSame($master->id, $warranty->master_id);
+        $this->assertSame('Опять не морозит', $warranty->symptom);
+        $this->assertSame(1, $warranty->visits()->count());
+
+        // ТЗ п.65: не новый обычный коммерческий заказ — не в обычных счётчиках.
+        // new_orders = 1 — это исходный заказ (тоже создан только что), а не
+        // гарантийный: будь исключение сломано, здесь было бы 2.
+        $stats = app(\App\Services\Orders\OrderStatsCalculator::class)
+            ->calculate(now()->subDay(), now()->addDay());
+        $this->assertSame(1, $stats['warranty_orders']);
+        $this->assertSame(1, $stats['new_orders']);
     }
 
     /**
-     * Сценарий 7 (CRM недоступна) — не реализовано, см. класс-докблок.
+     * Сценарий 6.1: гарантию нельзя открыть на незавершённом заказе.
      */
-    public function test_scenario_07_crm_outage_not_implemented(): void
+    public function test_scenario_06_warranty_unavailable_before_completion(): void
     {
-        $this->markTestSkipped('CRM-интеграция не входит в реализованные фазы — см. vault/Открытые вопросы.md.');
+        $admin = User::factory()->admin()->create(['telegram_user_id' => 90611]);
+        $masterUser = User::factory()->master()->create(['telegram_user_id' => 90612]);
+        $master = Master::factory()->for($masterUser)->create();
+        $order = $this->makeOrderAtStatus($admin, $master, OrderStatus::IN_PROGRESS);
+
+        $this->sendUpdate($this->callbackUpdate($admin->telegram_user_id, "order:warranty:{$order->number}"));
+
+        $this->assertSame(0, Order::query()->where('warranty_parent_order_id', $order->id)->count());
+        Http::assertSent(fn (Request $r) => str_contains($r->url(), 'sendMessage')
+            && str_contains($r['text'] ?? '', 'ещё не завершена')
+        );
+    }
+
+    /**
+     * Сценарий 7: CRM недоступна → Telegram продолжает работать → CRM
+     * восстановилась → данные досинхронизировались (ТЗ п.87).
+     */
+    public function test_scenario_07_crm_outage_then_recovery(): void
+    {
+        $admin = User::factory()->admin()->create(['telegram_user_id' => 90701]);
+        $masterUser = User::factory()->master()->create(['telegram_user_id' => 90702]);
+        $master = Master::factory()->for($masterUser)->create();
+        $order = $this->makeOrderAtStatus($admin, $master, OrderStatus::ASSIGNED);
+
+        // CRM недоступна на момент перехода.
+        $this->app->bind(\App\Services\Crm\CrmAdapter::class, fn () => new class implements \App\Services\Crm\CrmAdapter
+        {
+            public function syncOrder(Order $order): ?string
+            {
+                throw new \RuntimeException('CRM unreachable');
+            }
+        });
+
+        $this->sendUpdate($this->callbackUpdate($masterUser->telegram_user_id, "order:accept:{$order->number}"));
+
+        // Telegram продолжил работать как ни в чём не бывало.
+        $this->assertSame(OrderStatus::ACCEPTED, $order->fresh()->status);
+
+        // CRM "восстановилась" — следующий переход синкается штатно.
+        $this->app->bind(\App\Services\Crm\CrmAdapter::class, fn () => new class implements \App\Services\Crm\CrmAdapter
+        {
+            public function syncOrder(Order $order): ?string
+            {
+                return 'crm-recovered-1';
+            }
+        });
+
+        $this->sendUpdate($this->callbackUpdate($masterUser->telegram_user_id, "order:depart:{$order->number}"));
+
+        $this->assertSame(OrderStatus::ON_THE_WAY, $order->fresh()->status);
+        $this->assertSame('crm-recovered-1', $order->fresh()->crm_id);
     }
 
     /**
