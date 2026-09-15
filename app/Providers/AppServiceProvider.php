@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Services\Crm\CrmAdapter;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -14,7 +15,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // Конкретная реализация выбирается через config/services.php (crm.adapter,
+        // env CRM_ADAPTER_CLASS) — см. App\Services\Crm\CrmAdapter.
+        $this->app->bind(CrmAdapter::class, fn ($app) => $app->make(config('services.crm.adapter')));
     }
 
     /**

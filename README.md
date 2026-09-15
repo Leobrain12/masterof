@@ -81,6 +81,30 @@ docker compose exec app php artisan db:restore <файл> --force # восста
 
 `/api/telegram/webhook` (300 запросов/мин по IP) и `/api/v1/*` (60/мин, по `X-Internal-Api-Key`, не по IP — разные клиенты Internal API не делят один бюджет) — throttle стоит первым в цепочке middleware, до проверки секрета/ключа, так что режет объём независимо от того, прошла аутентификация или нет. Лимиты щедрые (не мешают легитимным всплескам), настроены в `AppServiceProvider::boot()`.
 
+## Internal API (CRM/сайт)
+
+ТЗ п.88 — приём заказов от CRM/сайта и обратная связь по ним, за `X-Internal-Api-Key`:
+
+```
+POST   /api/v1/orders                    Создать заказ (status=NEW, без мастера)
+GET    /api/v1/orders/{id}                Показать заказ
+PATCH  /api/v1/orders/{id}                Исправить логистические/контактные поля
+GET    /api/v1/orders/search              Поиск (status, master_id, customer_phone, number, visit_date_from/to)
+POST   /api/v1/orders/{id}/assign         Назначить мастера (NEW/MASTER_DECLINED → ASSIGNED)
+POST   /api/v1/orders/{id}/transition     Сменить статус напрямую (см. OrderStatusMachine)
+POST   /api/v1/orders/{id}/visits         Запланировать повторный визит (только из WAITING_PART)
+POST   /api/v1/orders/{id}/work-report    Завершить ремонт (только из IN_PROGRESS)
+POST   /api/v1/orders/{id}/media          Прикрепить фото/видео (multipart, до 20 МБ)
+POST   /api/v1/orders/{id}/payments       Отметить оплату (amount ≥ final_price → PAID)
+GET    /api/v1/masters                    Список мастеров
+GET    /api/v1/masters/{id}/stats         Статистика мастера (?from=&to=)
+GET    /api/v1/stats                      Общая сводка (?from=&to=)
+```
+
+Заказ, созданный через API, не проходит через `OrderDraftFlow` — он в статусе `NEW` без мастера, ADMIN назначает его вручную в боте (экран «Нераспределённые») либо CRM сама вызывает `/assign`. Каждый write-эндпоинт зеркалит соответствующий бот-flow (см. комментарии в контроллерах `app/Http/Controllers/Api`), чтобы CRM не могла обойти бизнес-правила, которые есть у мастера в Telegram.
+
+**CRM sync** (ТЗ п.85-87): каждый переход статуса (`OrderStatusMachine::transition()` — единая точка для всего жизненного цикла заказа) ставит `SyncOrderToCrm` в очередь, та вызывает `CrmAdapter::syncOrder()`. Реальной CRM ещё нет — по умолчанию `LogCrmAdapter` просто логирует снимок заказа. Когда появится Bitrix24/amoCRM/другая — новый класс, реализующий `App\Services\Crm\CrmAdapter`, подключается через `CRM_ADAPTER_CLASS` в `.env`, без изменений в остальном коде. Если CRM/очередь недоступны — заказ продолжает работать как обычно (`dispatchSafely()` перехватывает исключение), синк ретраится автоматически (5 попыток, backoff до 30 минут).
+
 ## Очистка (prune)
 
 `php artisan model:prune` удаляет истёкшие `pending_inputs`/`order_drafts` (`expires_at` в прошлом) и `telegram_updates` старше 7 дней (Prunable-модели, см. `app/Models`). Запланирован ежедневно в 03:15, сразу после `db:backup` — бэкап снимается до чистки, не после.
@@ -113,7 +137,9 @@ docker compose exec app php artisan test
 - `app/Services/Telegram` — `TelegramClient` (тонкая обёртка над Bot API, включая скачивание файлов), `UpdateHandler` (роутер апдейтов: черновик заявки → ожидание текста/шага/медиа → команды/кнопки → callback-и), `BotMenu` (клавиатуры по ролям).
 - `app/Services/Orders` — `OrderStatusMachine` (граф переходов + история, единственное место, где меняется статус), `MasterOrderGuard` (проверка владения заявкой), `DateSlotPicker` (общий выбор даты/слота), `OrderDraftFlow` (создание заявки), `OrderDecisionFlow` (приём/отказ мастера), `OrderReassignFlow`, `MasterMatcher`, `OrderNotifier`, `OrderListScreens`, `MasterOrderScreen` (единый экран активной заявки), `FieldProgressFlow` (выезд/прибытие), `DiagnosisFlow`, `PriceApprovalFlow`, `ContactAttemptFlow`, `OrderRescheduleFlow`, `PartRequestFlow`, `OrderVisitFlow`, `WorkReportFlow`, `PaymentFlow`, `MediaCollector`, `MediaCollectionFlow`, `MediaViewer`, `MasterStatsCalculator`, `OrderStatsCalculator`, `StatsFlow`.
 - `app/Http/Controllers/Telegram/WebhookController` — вход для прод-вебхука.
-- `app/Http/Controllers/Api/OrderTransitionController` — `POST /api/v1/orders/{id}/transition`, защищён `INTERNAL_API_KEY`.
+- `app/Http/Controllers/Api` — Internal API (ТЗ п.88, см. раздел выше), все защищены `INTERNAL_API_KEY`: `OrderController` (store/show/update/search), `OrderAssignController`, `OrderTransitionController`, `OrderVisitController`, `OrderWorkReportController`, `OrderMediaController`, `OrderPaymentController`, `MasterController`, `StatsController`.
+- `app/Services/Crm` — `CrmAdapter` (интерфейс), `LogCrmAdapter` (реализация по умолчанию, реальной CRM ещё нет).
+- `app/Jobs/SyncOrderToCrm` — очередь + автоматический ретрай синка заказа в CRM (ТЗ п.87).
 - `app/Console/Commands` — `telegram:poll`, `telegram:webhook`, `db:backup`, `db:restore`, `system:health-check`, `master:add`.
 - `database/seeders` — `ReferenceDataSeeder` (справочники + симптомы), `OwnerSeeder` (твой SUPERADMIN).
 

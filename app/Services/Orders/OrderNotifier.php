@@ -27,6 +27,18 @@ class OrderNotifier
         );
     }
 
+    /**
+     * ТЗ п.17.2: заказ пришёл через Internal API (сайт/CRM), не от админа
+     * в боте — никто ещё не в курсе, что его надо назначить мастеру.
+     */
+    public function orderReceivedViaApi(Order $order): void
+    {
+        $this->broadcastToAdmins(
+            "Новая заявка {$order->code()} получена через API".($order->source ? " ({$order->source})" : '').
+            ".\nКлиент: {$order->customer_name}\nТребует назначения мастера."
+        );
+    }
+
     public function assignedToMaster(Order $order): void
     {
         $master = $order->master;

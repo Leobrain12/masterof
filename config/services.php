@@ -45,4 +45,11 @@ return [
         'key' => env('INTERNAL_API_KEY'),
     ],
 
+    'crm' => [
+        // Реальной CRM ещё нет (см. vault/Решения.md) — по умолчанию адаптер
+        // только логирует снимок заказа. Когда появится Bitrix24/amoCRM/другая,
+        // сюда подставляется полный класс нового адаптера, без изменений в коде.
+        'adapter' => env('CRM_ADAPTER_CLASS', \App\Services\Crm\LogCrmAdapter::class),
+    ],
+
 ];

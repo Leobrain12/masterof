@@ -3,6 +3,7 @@
 namespace App\Services\Orders;
 
 use App\Enums\OrderStatus;
+use App\Jobs\SyncOrderToCrm;
 use App\Models\Order;
 use App\Models\OrderStatusHistory;
 use App\Models\User;
@@ -57,7 +58,7 @@ class OrderStatusMachine
         ?string $comment = null,
         array $attributes = [],
     ): Order {
-        return DB::transaction(function () use ($order, $to, $actor, $comment, $attributes) {
+        $fresh = DB::transaction(function () use ($order, $to, $actor, $comment, $attributes) {
             // SELECT ... FOR UPDATE — вторая параллельная попытка (ТЗ п.112) ждёт здесь,
             // а не читает устаревший статус до начала своей проверки.
             $fresh = Order::query()->whereKey($order->id)->lockForUpdate()->firstOrFail();
@@ -82,5 +83,14 @@ class OrderStatusMachine
 
             return $fresh;
         });
+
+        // Вне транзакции — синк не должен уйти в очередь для перехода, который
+        // в итоге откатился (ТЗ п.85.1: Backend → DB → Queue → CRMAdapter,
+        // именно в этом порядке). Единая точка для всего жизненного цикла
+        // заказа (ТЗ п.86) — каждый флоу (приём, диагностика, отчёт, оплата...)
+        // в итоге проходит через transition(), отдельно дёргать синк не нужно.
+        SyncOrderToCrm::dispatchSafely($fresh);
+
+        return $fresh;
     }
 }
