@@ -49,7 +49,13 @@ return [
         // Реальной CRM ещё нет (см. vault/Решения.md) — по умолчанию адаптер
         // только логирует снимок заказа. Когда появится Bitrix24/amoCRM/другая,
         // сюда подставляется полный класс нового адаптера, без изменений в коде.
-        'adapter' => env('CRM_ADAPTER_CLASS', \App\Services\Crm\LogCrmAdapter::class),
+        //
+        // ?: , не второй аргумент env() — CRM_ADAPTER_CLASS в .env.example
+        // намеренно оставлен пустым как "используй дефолт", но env('X', $default)
+        // отдаёт $default только когда переменной нет вовсе, а не когда она
+        // пустая строка — с пустым значением получили бы app()->make(''),
+        // BindingResolutionException. Поймано полным прогоном тестов, не постфактум.
+        'adapter' => env('CRM_ADAPTER_CLASS') ?: \App\Services\Crm\LogCrmAdapter::class,
     ],
 
 ];
