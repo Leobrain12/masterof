@@ -1,0 +1,44 @@
+# Единый образ для Dokploy Application (один Dockerfile = один контейнер —
+# там нет типа ресурса "Compose", см. vault/Решения.md): nginx + PHP-FPM в
+# одном контейнере через supervisor. Очередь (php artisan queue:work)
+# деплоится ВТОРЫМ Application-ресурсом из ЭТОГО ЖЕ образа, с командой
+# запуска, переопределённой в настройках приложения на
+# "php artisan queue:work --tries=3 --max-time=3600 --sleep=2" — не третьим
+# процессом здесь, чтобы падение воркера не било по веб-части и наоборот.
+#
+# Тот же postgresql16-client, что и в остальных образах, и по той же причине
+# (см. docker/php/Dockerfile) — версия клиента должна совпадать с тегом
+# db-сервиса/ресурса Database.
+FROM php:8.4-fpm-alpine
+
+RUN apk add --no-cache \
+        postgresql-dev \
+        postgresql16-client \
+        icu-dev \
+        oniguruma-dev \
+        libzip-dev \
+        nginx \
+        supervisor \
+        $PHPIZE_DEPS \
+    && docker-php-ext-install pdo pdo_pgsql mbstring bcmath intl zip opcache \
+    && pecl install redis \
+    && docker-php-ext-enable redis \
+    && apk del $PHPIZE_DEPS
+
+COPY docker/php/opcache-prod.ini /usr/local/etc/php/conf.d/zz-opcache.ini
+COPY docker/nginx/dokploy-single.conf /etc/nginx/http.d/default.conf
+COPY docker/supervisor/supervisord.conf /etc/supervisord.conf
+
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+WORKDIR /var/www
+COPY . .
+
+RUN composer install --no-dev --optimize-autoloader --no-interaction --no-progress \
+    && chown -R www-data:www-data storage bootstrap/cache \
+    && chmod +x docker/php/entrypoint.sh
+
+EXPOSE 80
+
+ENTRYPOINT ["docker/php/entrypoint.sh"]
+CMD ["supervisord", "-c", "/etc/supervisord.conf"]

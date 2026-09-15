@@ -25,14 +25,12 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
-    # Без ports: — на голом сервере это ломает TLS (README#Деплой-в-прод
-    # предполагал Caddy/nginx-хоста перед стеком на 80). Под Dokploy иначе:
-    # его собственный Traefik уже держит 80/443 на хосте и сам достаёт этот
-    # сервис по внутренней docker-сети через Domains в UI Dokploy — второй
-    # процесс, слушающий 80 на хосте, только помешал бы. На голом сервере
-    # без Dokploy верни `ports: ["80:80"]` обратно.
-    expose:
-      - "80"
+    # Для голого сервера без Dokploy — публикуем 80 на хост, TLS терминирует
+    # Caddy/nginx-хоста перед этим стеком (см. README#Деплой-в-прод). Деплой
+    # через Dokploy использует другой файл — docker-compose.dokploy.yml —
+    # там порт НЕ публикуется, потому что 80/443 на хосте держит сам Dokploy.
+    ports:
+      - "80:80"
     volumes:
       - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:

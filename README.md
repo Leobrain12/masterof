@@ -111,25 +111,30 @@ GET    /api/v1/stats                      Общая сводка (?from=&to=)
 
 ## Деплой в прод
 
-`docker-compose.yml` (dev) намеренно не годится для прода: `artisan serve` — однопоточный dev-сервер, код смонтирован томом, а не запечён в образ, БД/Redis торчат портами наружу. `docker-compose.prod.yml` — отдельный контур: PHP-FPM + nginx, `restart: unless-stopped` на всём, БД/Redis без `ports:` (доступны только другим сервисам compose), образ собирается из `docker/php/Dockerfile.prod`. Проверено вживую: сборка, миграции, `/up` через nginx, `/` → 404, вебхук без секрета → 403.
+`docker-compose.yml` (dev) намеренно не годится для прода: `artisan serve` — однопоточный dev-сервер, код смонтирован томом, а не запечён в образ, БД/Redis торчат портами наружу. Три прод-варианта:
+
+- **`docker/php/Dockerfile.dokploy`** — один образ (nginx + PHP-FPM в одном контейнере через supervisor), под Dokploy Application (тот умеет собирать только один Dockerfile, без типа ресурса "Compose" — см. vault/Решения.md). Основной вариант для этого проекта.
+- **`docker-compose.prod.yml`** — голый сервер без Dokploy: PHP-FPM + nginx отдельными сервисами (`docker/php/Dockerfile.prod`), БД/Redis самодостаточны внутри того же файла, nginx публикует `80:80` на хост.
+- **`docker-compose.dokploy.yml`** — тот же compose-контур, но БД/Redis как отдельные ресурсы Dokploy — про запас, если когда-нибудь появится Dokploy-ресурс типа Compose.
+
+Проверено вживую (на `Dockerfile.dokploy`): сборка, `/up`/`/` /вебхук-без-секрета через supervisor+nginx+php-fpm в одном контейнере, и намеренное падение php-fpm внутри контейнера — восстанавливается сам за секунду, без ручного вмешательства.
 
 ### Вариант: Dokploy
 
-Основной способ деплоя этого проекта. У Dokploy свой Traefik перед всеми приложениями — он и держит 80/443 на хосте, и сам оформляет Let's Encrypt, поэтому `docker-compose.prod.yml` намеренно НЕ публикует порт 80 у nginx (`expose:`, не `ports:` — см. комментарий в файле). Общая схема (точные названия полей в UI могут отличаться версии от версии — сверяем вживую по ходу деплоя):
-
-1. **Приложение** — новый проект в Dokploy → Application → тип **Docker Compose**, репозиторий `Leobrain12/masterof` (приватный — подключить через GitHub App/deploy key в интеграциях Dokploy), файл — `docker-compose.prod.yml`, ветка `master`.
-2. **Переменные окружения** — вкладка Environment: те же ключи, что в `.env.example` (`APP_KEY`, `APP_ENV=production`, `APP_DEBUG=false`, `APP_URL=https://your-domain.com`, `DB_*`, `REDIS_*`, `TELEGRAM_*`, `INTERNAL_API_KEY`, `CRM_ADAPTER_CLASS`, `MEDIA_DISK_DRIVER` и т.д.) — случайные боевые значения, не из репозитория. `APP_KEY` — сгенерировать отдельно (`php artisan key:generate --show` в любом PHP 8.4, или после первого деплоя через терминал контейнера в UI Dokploy) и вписать руками, автогенерации на лету здесь не будет.
-3. **Домен** — вкладка Domains: указать сервис `nginx`, порт `80`, домен `your-domain.com`. Dokploy сам добавит нужные Traefik-лейблы и закажет сертификат — руками их в `docker-compose.prod.yml` прописывать не нужно.
-4. **Деплой** — собирает образы из `docker/php/Dockerfile.prod`, поднимает стек.
-5. **Разовые шаги после первого деплоя** (через терминал контейнера `app` в UI Dokploy, либо SSH на хост если есть):
+1. **БД/Redis** — отдельные ресурсы Database (Postgres) и Redis в Dokploy, если ещё не созданы. В их карточках посмотреть **Internal Host** и **Port** (не JDBC-строку, если Dokploy такую показывает для удобства копирования извне — этот формат не понимает Laravel).
+2. **Веб-приложение** — Application → Build Type **Dockerfile**, Docker File — `docker/php/Dockerfile.dokploy`, Docker Context Path — `.`. Репозиторий `Leobrain12/masterof` (приватный — SSH deploy key или GitHub-интеграция в Dokploy, не просто HTTPS-URL). Ветка — `master`, не `main`.
+3. **Переменные окружения** — вкладка Environment. Единственно верный список — `.env.example` в репозитории, не шаблоны из других ботов: разные названия (`DB_USER` вместо `DB_USERNAME`, `SUPERADMIN_TELEGRAM_ID` вместо `TELEGRAM_OWNER_ID` и т.п.) молча не сработают — Laravel их просто не найдёт под именами, которые не совпадают буква в букву. `DB_HOST`/`DB_PORT`/`REDIS_HOST`/`REDIS_PORT` — из шага 1. `APP_KEY` — сгенерировать отдельно (`php artisan key:generate --show` в любом PHP 8.4) и вписать руками, автогенерации на лету здесь не будет.
+4. **Домен** — вкладка Domains: порт `80` (nginx внутри контейнера), домен `your-domain.com`. Dokploy сам добавит нужные Traefik-лейблы и закажет сертификат.
+5. **Очередь** — второй Application-ресурс из ТОГО ЖЕ репозитория и Dockerfile (`docker/php/Dockerfile.dokploy`), но с переопределённой командой запуска (обычно поле "Docker Command"/аналог в Advanced-настройках): `php artisan queue:work --tries=3 --max-time=3600 --sleep=2`. Те же переменные окружения, что у веб-приложения. Без Domain — этому ресурсу наружу отвечать не на что.
+6. **Разовые шаги после первого деплоя** (через терминал контейнера веб-приложения в UI Dokploy, либо SSH на хост если есть):
    ```bash
    php artisan migrate --force
    php artisan db:seed --class=OwnerSeeder
    ```
-6. **Cron** — если у Dokploy на этой версии есть Scheduled Jobs, завести туда `php artisan schedule:run` раз в минуту в контейнере `app`; если нет — обычный host-crontab (см. ниже), если есть SSH-доступ к серверу помимо самого Dokploy.
-7. Дальше — как в любом варианте: проверить `/up`, поставить вебхук (см. «Cron на хосте» / команду `telegram:webhook set` ниже).
+7. **Cron** — если у Dokploy на этой версии есть Scheduled Jobs, завести туда `php artisan schedule:run` раз в минуту в веб-контейнере; если нет — обычный host-crontab (см. ниже), если есть SSH-доступ к серверу помимо самого Dokploy.
+8. Дальше — как в любом варианте: проверить `/up`, поставить вебхук (см. «Cron на хосте» / команду `telegram:webhook set` ниже).
 
-Первый прогон вместе — часть вещей (точное название вкладок, доступен ли SSH к хосту отдельно от Dokploy) выяснится по ходу, план выше — отправная точка, не точная инструкция клик-в-клик.
+Первый прогон вместе — часть вещей (точное название полей в UI, доступен ли SSH к хосту отдельно от Dokploy) выяснится по ходу, план выше — отправная точка, не точная инструкция клик-в-клик.
 
 ### Вариант: голый сервер (без Dokploy)
 
