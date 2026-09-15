@@ -113,9 +113,27 @@ GET    /api/v1/stats                      Общая сводка (?from=&to=)
 
 `docker-compose.yml` (dev) намеренно не годится для прода: `artisan serve` — однопоточный dev-сервер, код смонтирован томом, а не запечён в образ, БД/Redis торчат портами наружу. `docker-compose.prod.yml` — отдельный контур: PHP-FPM + nginx, `restart: unless-stopped` на всём, БД/Redis без `ports:` (доступны только другим сервисам compose), образ собирается из `docker/php/Dockerfile.prod`. Проверено вживую: сборка, миграции, `/up` через nginx, `/` → 404, вебхук без секрета → 403.
 
-### Требования
+### Вариант: Dokploy
 
-Сервер с Docker + Docker Compose, домен, указывающий на его IP. Сам стек отдаёт только plain HTTP на 80 — TLS-терминация вне зоны ответственности этого compose-файла (Telegram требует HTTPS для вебхука, ТЗ п.93). Самый безболезненный вариант для соло-разработки — [Caddy](https://caddyserver.com/) перед этим стеком, у него автоматический Let's Encrypt в несколько строк конфига:
+Основной способ деплоя этого проекта. У Dokploy свой Traefik перед всеми приложениями — он и держит 80/443 на хосте, и сам оформляет Let's Encrypt, поэтому `docker-compose.prod.yml` намеренно НЕ публикует порт 80 у nginx (`expose:`, не `ports:` — см. комментарий в файле). Общая схема (точные названия полей в UI могут отличаться версии от версии — сверяем вживую по ходу деплоя):
+
+1. **Приложение** — новый проект в Dokploy → Application → тип **Docker Compose**, репозиторий `Leobrain12/masterof` (приватный — подключить через GitHub App/deploy key в интеграциях Dokploy), файл — `docker-compose.prod.yml`, ветка `master`.
+2. **Переменные окружения** — вкладка Environment: те же ключи, что в `.env.example` (`APP_KEY`, `APP_ENV=production`, `APP_DEBUG=false`, `APP_URL=https://your-domain.com`, `DB_*`, `REDIS_*`, `TELEGRAM_*`, `INTERNAL_API_KEY`, `CRM_ADAPTER_CLASS`, `MEDIA_DISK_DRIVER` и т.д.) — случайные боевые значения, не из репозитория. `APP_KEY` — сгенерировать отдельно (`php artisan key:generate --show` в любом PHP 8.4, или после первого деплоя через терминал контейнера в UI Dokploy) и вписать руками, автогенерации на лету здесь не будет.
+3. **Домен** — вкладка Domains: указать сервис `nginx`, порт `80`, домен `your-domain.com`. Dokploy сам добавит нужные Traefik-лейблы и закажет сертификат — руками их в `docker-compose.prod.yml` прописывать не нужно.
+4. **Деплой** — собирает образы из `docker/php/Dockerfile.prod`, поднимает стек.
+5. **Разовые шаги после первого деплоя** (через терминал контейнера `app` в UI Dokploy, либо SSH на хост если есть):
+   ```bash
+   php artisan migrate --force
+   php artisan db:seed --class=OwnerSeeder
+   ```
+6. **Cron** — если у Dokploy на этой версии есть Scheduled Jobs, завести туда `php artisan schedule:run` раз в минуту в контейнере `app`; если нет — обычный host-crontab (см. ниже), если есть SSH-доступ к серверу помимо самого Dokploy.
+7. Дальше — как в любом варианте: проверить `/up`, поставить вебхук (см. «Cron на хосте» / команду `telegram:webhook set` ниже).
+
+Первый прогон вместе — часть вещей (точное название вкладок, доступен ли SSH к хосту отдельно от Dokploy) выяснится по ходу, план выше — отправная точка, не точная инструкция клик-в-клик.
+
+### Вариант: голый сервер (без Dokploy)
+
+Сервер с Docker + Docker Compose, домен, указывающий на его IP. Сам стек отдаёт только plain HTTP — TLS-терминация вне зоны ответственности этого compose-файла (Telegram требует HTTPS для вебхука, ТЗ п.93). Самый безболезненный вариант для соло-разработки — [Caddy](https://caddyserver.com/) перед этим стеком, у него автоматический Let's Encrypt в несколько строк конфига (и `ports: ["80:80"]` у nginx в `docker-compose.prod.yml` нужно вернуть — без Dokploy порт 80 на хосте никто больше не занимает):
 
 ```
 # /etc/caddy/Caddyfile на хосте (Caddy не входит в docker-compose.prod.yml —
@@ -125,7 +143,7 @@ your-domain.com {
 }
 ```
 
-### Первый деплой
+### Первый деплой (голый сервер)
 
 ```bash
 git clone <repo> service-ops && cd service-ops
