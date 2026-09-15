@@ -14,7 +14,14 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        // За Traefik'ом (Dokploy) или другим обратным прокси Laravel по умолчанию
+        // не доверяет X-Forwarded-* заголовкам — Host/scheme запроса разбираются
+        // как есть, что в контейнерном деплое ведёт к ошибкам вида "Invalid URI:
+        // Host is malformed" и неверной генерации https-ссылок. '*' — доверяем
+        // прокси с любого IP: сам контейнер снаружи недостижим напрямую (см.
+        // docker/php/Dockerfile.dokploy — expose, не публикация порта), доверенный
+        // прокси — единственный, кто вообще может достучаться, IP заранее не known.
+        $middleware->trustProxies(at: '*');
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(
