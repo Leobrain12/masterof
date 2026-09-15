@@ -1,0 +1,44 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    volumes:
+      - .:/var/www
+    working_dir: /var/www
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+
+  queue:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    command: php artisan queue:work --tries=3 --sleep=2
+    volumes:
+      - .:/var/www
+    working_dir: /var/www
+    depends_on:
+      - db
+      - redis
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-service_ops}
+      POSTGRES_USER: ${DB_USERNAME:-service_ops}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-service_ops}
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  dbdata:
