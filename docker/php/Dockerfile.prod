@@ -1,0 +1,40 @@
+# Прод-образ. Отличия от dev-образа (docker/php/Dockerfile):
+# - php-fpm, не artisan serve (однопоточный dev-сервер — официально не для прода,
+#   сериализует все запросы, включая вебхуки от Telegram);
+# - код запечён в образ (COPY), а не смонтирован томом — неизменяемый деплой;
+# - composer install --no-dev внутри образа, не на хосте;
+# - opcache включён и не проверяет mtime файлов (validate_timestamps=0) —
+#   обновление кода требует пересборки образа, а не просто правки файла.
+#
+# Тот же postgresql16-client, что и в dev-образе, и по той же причине (см.
+# комментарий там) — версия клиента должна совпадать с тегом db-сервиса.
+FROM php:8.4-fpm-alpine
+
+RUN apk add --no-cache \
+        postgresql-dev \
+        postgresql16-client \
+        icu-dev \
+        oniguruma-dev \
+        libzip-dev \
+        $PHPIZE_DEPS \
+    && docker-php-ext-install pdo pdo_pgsql mbstring bcmath intl zip opcache \
+    && pecl install redis \
+    && docker-php-ext-enable redis \
+    && apk del $PHPIZE_DEPS
+
+COPY docker/php/opcache-prod.ini /usr/local/etc/php/conf.d/zz-opcache.ini
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+WORKDIR /var/www
+COPY . .
+
+RUN composer install --no-dev --optimize-autoloader --no-interaction --no-progress \
+    && chown -R www-data:www-data storage bootstrap/cache \
+    && chmod +x docker/php/entrypoint.sh
+
+USER www-data
+
+EXPOSE 9000
+
+ENTRYPOINT ["docker/php/entrypoint.sh"]
+CMD ["php-fpm"]

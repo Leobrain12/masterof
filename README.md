@@ -109,17 +109,74 @@ GET    /api/v1/stats                      Общая сводка (?from=&to=)
 
 `php artisan model:prune` удаляет истёкшие `pending_inputs`/`order_drafts` (`expires_at` в прошлом) и `telegram_updates` старше 7 дней (Prunable-модели, см. `app/Models`). Запланирован ежедневно в 03:15, сразу после `db:backup` — бэкап снимается до чистки, не после.
 
+## Деплой в прод
+
+`docker-compose.yml` (dev) намеренно не годится для прода: `artisan serve` — однопоточный dev-сервер, код смонтирован томом, а не запечён в образ, БД/Redis торчат портами наружу. `docker-compose.prod.yml` — отдельный контур: PHP-FPM + nginx, `restart: unless-stopped` на всём, БД/Redis без `ports:` (доступны только другим сервисам compose), образ собирается из `docker/php/Dockerfile.prod`. Проверено вживую: сборка, миграции, `/up` через nginx, `/` → 404, вебхук без секрета → 403.
+
+### Требования
+
+Сервер с Docker + Docker Compose, домен, указывающий на его IP. Сам стек отдаёт только plain HTTP на 80 — TLS-терминация вне зоны ответственности этого compose-файла (Telegram требует HTTPS для вебхука, ТЗ п.93). Самый безболезненный вариант для соло-разработки — [Caddy](https://caddyserver.com/) перед этим стеком, у него автоматический Let's Encrypt в несколько строк конфига:
+
+```
+# /etc/caddy/Caddyfile на хосте (Caddy не входит в docker-compose.prod.yml —
+# TLS-стратегия зависит от хостинга, не должна быть зашита в сам стек)
+your-domain.com {
+    reverse_proxy localhost:80
+}
+```
+
+### Первый деплой
+
+```bash
+git clone <repo> service-ops && cd service-ops
+cp .env.example .env
+php artisan key:generate --show   # вписать результат в APP_KEY вручную, или через docker (см. ниже)
+# .env: APP_ENV=production, APP_DEBUG=false, APP_URL=https://your-domain.com,
+# TELEGRAM_*, INTERNAL_API_KEY, боевые DB_PASSWORD — случайные, не из репозитория
+
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d db redis
+docker compose -f docker-compose.prod.yml run --rm app php artisan key:generate
+docker compose -f docker-compose.prod.yml run --rm app php artisan migrate --force
+docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml exec app php artisan db:seed --class=OwnerSeeder
+
+curl -s https://your-domain.com/up   # ожидается 200
+php artisan telegram:webhook set https://your-domain.com/api/telegram/webhook
+```
+
+БД/Redis подняты и смигрированы **до** остального стека сознательно: `CACHE_STORE=database` — если `app`/`queue` стартуют раньше, чем существует таблица `cache`, в логах будет безвредная, но лишняя ошибка на первый опрос.
+
+### Cron на хосте
+
+Планировщик (`db:backup`, `system:health-check`, `model:prune`) не поднят отдельным контейнером — один cron-триггер на хосте, как рекомендует сам Laravel:
+
+```
+* * * * * cd /path/to/service-ops && docker compose -f docker-compose.prod.yml exec -T app php artisan schedule:run >> /dev/null 2>&1
+```
+
+### Обновление кода
+
+```bash
+git pull
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml run --rm app php artisan migrate --force
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Пересборка образа = новый `config:cache`/`route:cache`/`view:cache` при старте контейнера (см. `docker/php/entrypoint.sh`) — простой `git pull` без пересборки ничего не изменит, `opcache.validate_timestamps=0` в проде намеренно игнорирует правки файлов на диске.
+
 ## Прод-чеклист
 
 Перед тем как пускать реальный поток заказов:
 
-- [ ] `APP_DEBUG=false` — иначе исключения показывают трассировку и потенциально данные запроса.
+- [ ] `APP_ENV=production`, `APP_DEBUG=false` — иначе исключения показывают трассировку и потенциально данные запроса.
 - [ ] `TELEGRAM_WEBHOOK_SECRET` — случайная строка, не значение из этого репозитория.
 - [ ] `INTERNAL_API_KEY` — то же самое.
-- [ ] Вебхук установлен на HTTPS-адрес (`telegram:webhook set`), не polling.
-- [ ] `MEDIA_DISK_DRIVER=s3` (или другой не-local) — на одноразовом контейнере локальный диск не переживёт передеплой.
+- [ ] TLS настроен (Caddy/nginx+certbot/управляемый балансировщик — см. выше), вебхук установлен на HTTPS-адрес (`telegram:webhook set`), не polling.
+- [ ] `MEDIA_DISK_DRIVER=s3` (или другой не-local) — том `storage` переживает передеплой контейнера, но локальный диск всё равно не то же самое, что реальный бэкап медиа (ТЗ п.54, 99).
 - [ ] `SENTRY_LARAVEL_DSN` заведён, если нужен мониторинг за пределами Telegram-алертов.
-- [ ] Cron поднят (`* * * * * php artisan schedule:run`) — иначе не будет ни бэкапов, ни health-check.
+- [ ] Cron поднят (`* * * * * ... schedule:run`) — иначе не будет ни бэкапов, ни health-check, ни prune.
 - [ ] `db:restore` протестирован хотя бы раз на этом окружении (ТЗ п.106).
 - [ ] Юридическая схема передачи ПД клиента мастеру согласована (см. `vault/Открытые вопросы.md`).
 
@@ -142,6 +199,7 @@ docker compose exec app php artisan test
 - `app/Jobs/SyncOrderToCrm` — очередь + автоматический ретрай синка заказа в CRM (ТЗ п.87).
 - `app/Console/Commands` — `telegram:poll`, `telegram:webhook`, `db:backup`, `db:restore`, `system:health-check`, `master:add`.
 - `database/seeders` — `ReferenceDataSeeder` (справочники + симптомы), `OwnerSeeder` (твой SUPERADMIN).
+- `docker-compose.yml`/`docker/php/Dockerfile` — dev (`artisan serve`, код томом). `docker-compose.prod.yml`/`docker/php/Dockerfile.prod`/`docker/nginx` — прод (PHP-FPM + nginx, код в образе), см. «Деплой в прод» выше.
 
 ## База знаний (Obsidian)
 

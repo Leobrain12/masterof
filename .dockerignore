@@ -1,0 +1,17 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+node_modules
+vendor
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/app/private/*
+vault/.obsidian
+tests
+.phpunit.result.cache
+docker-compose.yml
+docker-compose.prod.yml
