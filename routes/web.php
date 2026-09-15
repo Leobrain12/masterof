@@ -1,7 +1,5 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-
-Route::get('/', function () {
-    return view('welcome');
-});
+// Интерфейс этого бэкенда — только Telegram-бот (см. README), отдельной
+// веб-админки нет, поэтому здесь намеренно пусто. Health-check живёт
+// отдельно на /up (см. bootstrap/app.php), не здесь.

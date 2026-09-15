@@ -77,6 +77,10 @@ docker compose exec app php artisan db:restore <файл> --force # восста
 
 `php artisan system:health-check` проверяет вебхук (ошибки, застрявшие апдейты), Redis и БД; при проблеме шлёт алерт `TELEGRAM_OWNER_ID` и репортит в Sentry, если задан `SENTRY_LARAVEL_DSN` (пусто по умолчанию — SDK молчит). Запланирован каждые 15 минут, тот же cron-триггер, что и для бэкапа.
 
+## Rate limiting
+
+`/api/telegram/webhook` (300 запросов/мин по IP) и `/api/v1/*` (60/мин, по `X-Internal-Api-Key`, не по IP — разные клиенты Internal API не делят один бюджет) — throttle стоит первым в цепочке middleware, до проверки секрета/ключа, так что режет объём независимо от того, прошла аутентификация или нет. Лимиты щедрые (не мешают легитимным всплескам), настроены в `AppServiceProvider::boot()`.
+
 ## Прод-чеклист
 
 Перед тем как пускать реальный поток заказов:

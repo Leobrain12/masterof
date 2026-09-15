@@ -9,9 +9,9 @@ use Illuminate\Support\Facades\Route;
 // Telegram шлёт сюда все апдейты (сообщения, нажатия кнопок).
 // Не под /api/v1 — это не часть Internal API из ТЗ п.88, а отдельный вход бота.
 Route::post('/telegram/webhook', WebhookController::class)
-    ->middleware(VerifyTelegramWebhookSecret::class);
+    ->middleware(['throttle:telegram-webhook', VerifyTelegramWebhookSecret::class]);
 
 // Internal API (ТЗ п.88) — наполняется по мере фаз, сейчас только transition.
-Route::prefix('v1')->middleware(VerifyInternalApiKey::class)->group(function () {
+Route::prefix('v1')->middleware(['throttle:internal-api', VerifyInternalApiKey::class])->group(function () {
     Route::post('/orders/{order}/transition', OrderTransitionController::class);
 });
