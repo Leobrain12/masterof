@@ -9,6 +9,11 @@
 # Тот же postgresql16-client, что и в остальных образах, и по той же причине
 # (см. docker/php/Dockerfile) — версия клиента должна совпадать с тегом
 # db-сервиса/ресурса Database.
+#
+# Redis — через predis (composer), не PECL phpredis: именно pecl install
+# redis не смог достучаться до pecl.php.net с build-сервера Dokploy на
+# практике (см. vault/Решения.md) — predis тянется вместе с остальными
+# зависимостями через composer install, отдельной сети не требует.
 FROM php:8.4-fpm-alpine
 
 RUN apk add --no-cache \
@@ -21,8 +26,6 @@ RUN apk add --no-cache \
         supervisor \
         $PHPIZE_DEPS \
     && docker-php-ext-install pdo pdo_pgsql mbstring bcmath intl zip opcache \
-    && pecl install redis \
-    && docker-php-ext-enable redis \
     && apk del $PHPIZE_DEPS
 
 COPY docker/php/opcache-prod.ini /usr/local/etc/php/conf.d/zz-opcache.ini

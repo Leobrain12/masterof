@@ -5,6 +5,11 @@ FROM php:8.4-cli-alpine
 # settings the docker-compose db service (postgres:16-alpine) doesn't understand
 # (e.g. "transaction_timeout"), silently breaking db:restore. Bump this alongside the
 # db service's image tag in docker-compose.yml, never independently.
+# Redis — через predis (чистый PHP-клиент, composer), не через PECL-расширение
+# phpredis: сборка PECL требует сети до pecl.php.net на этапе docker build,
+# а это не всегда доступно (см. vault/Решения.md — реальный сбой на билд-сервере
+# Dokploy). predis чуть медленнее phpredis, но для этого масштаба разница не важна,
+# а независимость от pecl.php.net на билде — важна.
 RUN apk add --no-cache \
         postgresql-dev \
         postgresql16-client \
@@ -15,8 +20,6 @@ RUN apk add --no-cache \
         unzip \
         $PHPIZE_DEPS \
     && docker-php-ext-install pdo pdo_pgsql mbstring bcmath intl zip \
-    && pecl install redis \
-    && docker-php-ext-enable redis \
     && apk del $PHPIZE_DEPS
 
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
