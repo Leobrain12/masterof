@@ -7,8 +7,13 @@ use App\Services\Telegram\UpdateHandler;
 use Illuminate\Console\Command;
 
 /**
- * Long polling для локальной разработки (ТЗ п.94 — допускается на local/dev/staging).
- * На проде используется webhook (см. WebhookController), эта команда там не нужна.
+ * Long polling (ТЗ п.94 — допускается на local/dev/staging; на проде обычно webhook,
+ * см. WebhookController). Реальное исключение: сеть, где сервер сам может выйти
+ * наружу до api.telegram.org (в т.ч. через прокси, см. TelegramClient), но
+ * Telegram не может достучаться ВХОДЯЩИМ соединением до сервера (last_error_message:
+ * "Connection timed out" на getWebhookInfo при полностью рабочем домене/TLS —
+ * см. vault/Решения.md). Тогда polling — не временная затычка, а единственный
+ * рабочий вариант: он только выходит наружу, входящих соединений не требует.
  */
 class TelegramPoll extends Command
 {
