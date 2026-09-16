@@ -210,6 +210,33 @@ class OrderCreationFlowTest extends TestCase
         Http::assertSent(fn ($request) => str_contains($request['text'] ?? '', 'не телефон'));
     }
 
+    public function test_menu_command_exits_stuck_draft_instead_of_repeating_validation_error(): void
+    {
+        $admin = User::factory()->admin()->create(['telegram_user_id' => 1006]);
+        $fridge = ApplianceType::where('name', 'Холодильник')->firstOrFail();
+
+        $this->postMessage($admin->telegram_user_id, 'Новая заявка');
+        $this->postCallback($admin->telegram_user_id, "draft:appliance_type:{$fridge->id}");
+        $this->postCallback($admin->telegram_user_id, 'draft:brand:unknown');
+        $this->postCallback($admin->telegram_user_id, 'draft:model:skip');
+        $symptom = \App\Models\Symptom::where('appliance_type_id', $fridge->id)->firstOrFail();
+        $this->postCallback($admin->telegram_user_id, "draft:symptom:{$symptom->id}");
+        $this->postCallback($admin->telegram_user_id, 'draft:description:skip');
+        $this->postMessage($admin->telegram_user_id, 'Клиент');
+
+        // Раньше это застревало навсегда — ни кнопка меню, ни /start не прерывали
+        // черновик, бот раз за разом повторял "не телефон" (см. живой QA-прогон
+        // 16.09.2026, vault/Фазы/Фаза 07 — Прод-готовность.md).
+        $this->postMessage($admin->telegram_user_id, 'телефон123');
+        $this->assertDatabaseHas('order_drafts', ['step' => 'CUSTOMER_PHONE']);
+
+        $this->postMessage($admin->telegram_user_id, 'Активные');
+
+        $this->assertDatabaseCount('order_drafts', 0);
+        Http::assertSent(fn ($request) => str_contains($request['text'] ?? '', 'Черновик заявки отменён'));
+        Http::assertSent(fn ($request) => str_contains($request['text'] ?? '', 'Активных заказов нет'));
+    }
+
     public function test_draft_is_discarded_after_expiry(): void
     {
         $admin = User::factory()->admin()->create(['telegram_user_id' => 1004]);

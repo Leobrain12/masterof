@@ -119,32 +119,36 @@ class UpdateHandler
 
     private function handleMessage(User $user, int $chatId, string $text): void
     {
-        $draft = $this->activeDraftFor($user);
+        if ($text === '/start' || $this->menu->isMenuCommand($user, $text)) {
+            $this->exitActiveScenario($user, $chatId);
+        } else {
+            $draft = $this->activeDraftFor($user);
 
-        if ($draft) {
-            $this->draftFlow->handle($user, $draft, $chatId, $text, null);
+            if ($draft) {
+                $this->draftFlow->handle($user, $draft, $chatId, $text, null);
 
-            return;
-        }
+                return;
+            }
 
-        $pending = $this->activePendingInputFor($user);
+            $pending = $this->activePendingInputFor($user);
 
-        if ($pending) {
-            match ($pending->kind) {
-                'order_decline_reason' => $this->decisionFlow->declineCustomReasonText($user, $chatId, $pending, $text),
-                'price_approval' => $this->priceFlow->handleEntryText($user, $chatId, $pending, $text),
-                'price_decline_reason' => $this->priceFlow->declineCustomReasonText($user, $chatId, $pending, $text),
-                'reschedule' => $this->rescheduleFlow->handle($user, $pending, $chatId, $text, null),
-                'waiting_part' => $this->partRequestFlow->handle($user, $pending, $chatId, $text, null),
-                'next_visit' => $this->visitFlow->handle($user, $pending, $chatId, $text, null),
-                'work_report' => $this->workReportFlow->handle($user, $pending, $chatId, $text, null),
-                'payment_partial' => $this->paymentFlow->handlePartialAmountText($user, $chatId, $pending, $text),
-                'stats_period' => $this->statsFlow->handleCustomText($user, $chatId, $pending, $text),
-                'warranty_return' => $this->warrantyFlow->handle($user, $pending, $chatId, $text, null),
-                default => $pending->delete(),
-            };
+            if ($pending) {
+                match ($pending->kind) {
+                    'order_decline_reason' => $this->decisionFlow->declineCustomReasonText($user, $chatId, $pending, $text),
+                    'price_approval' => $this->priceFlow->handleEntryText($user, $chatId, $pending, $text),
+                    'price_decline_reason' => $this->priceFlow->declineCustomReasonText($user, $chatId, $pending, $text),
+                    'reschedule' => $this->rescheduleFlow->handle($user, $pending, $chatId, $text, null),
+                    'waiting_part' => $this->partRequestFlow->handle($user, $pending, $chatId, $text, null),
+                    'next_visit' => $this->visitFlow->handle($user, $pending, $chatId, $text, null),
+                    'work_report' => $this->workReportFlow->handle($user, $pending, $chatId, $text, null),
+                    'payment_partial' => $this->paymentFlow->handlePartialAmountText($user, $chatId, $pending, $text),
+                    'stats_period' => $this->statsFlow->handleCustomText($user, $chatId, $pending, $text),
+                    'warranty_return' => $this->warrantyFlow->handle($user, $pending, $chatId, $text, null),
+                    default => $pending->delete(),
+                };
 
-            return;
+                return;
+            }
         }
 
         if ($text === '/start') {
@@ -343,6 +347,32 @@ class UpdateHandler
             'warranty' => $user->role->isAdminLike() ? $this->warrantyFlow->start($user, $chatId, $orderNumber) : null,
             default => null,
         };
+    }
+
+    /**
+     * Запасной выход: команда меню или /start прервали активный черновик заявки
+     * или PendingInput-сценарий. Раньше проверка черновика/pending шла раньше
+     * этих команд без исключений — пользователь, ошибившийся вводом посреди
+     * сценария, не мог выйти из него никак, кроме как подобрать корректный
+     * формат (см. живой QA-прогон 16.09.2026, vault/Фазы/Фаза 07).
+     */
+    private function exitActiveScenario(User $user, int $chatId): void
+    {
+        $draft = $this->activeDraftFor($user);
+
+        if ($draft) {
+            $draft->delete();
+            $this->telegram->sendMessage($chatId, '❌ Черновик заявки отменён.');
+
+            return;
+        }
+
+        $pending = $this->activePendingInputFor($user);
+
+        if ($pending) {
+            $pending->delete();
+            $this->telegram->sendMessage($chatId, '❌ Текущее действие отменено.');
+        }
     }
 
     private function activeDraftFor(User $user): ?OrderDraft

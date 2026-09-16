@@ -163,6 +163,53 @@ class OrderDecisionFlowTest extends TestCase
         Http::assertSent(fn ($request) => (int) ($request['chat_id'] ?? 0) === $newUser->telegram_user_id
             && str_contains($request['reply_markup'] ?? '', "order:accept:{$order->number}")
         );
+
+        // Заявка уже была назначена decliningMaster до отказа — это смена мастера,
+        // текст должен явно отличать её от первого назначения (см. тест ниже).
+        Http::assertSent(fn ($request) => (int) ($request['chat_id'] ?? 0) === $admin->telegram_user_id
+            && str_contains($request['text'] ?? '', "{$order->code()} переназначена мастеру Новый")
+        );
+    }
+
+    public function test_first_assignment_from_new_order_says_assigned_not_reassigned(): void
+    {
+        $admin = User::factory()->admin()->create(['telegram_user_id' => 3007]);
+        $fridge = ApplianceType::where('name', 'Холодильник')->firstOrFail();
+        $slot = TimeSlot::first();
+
+        $order = Order::create([
+            'customer_name' => 'Клиент',
+            'customer_phone' => '+79990001122',
+            'appliance_type_id' => $fridge->id,
+            'symptom' => 'Не морозит',
+            'address' => 'Москва',
+            'visit_date' => now()->toDateString(),
+            'time_slot_label' => $slot->label,
+            'time_slot_id' => $slot->id,
+            'status' => OrderStatus::NEW,
+            'created_by' => $admin->id,
+        ]);
+
+        $masterUser = User::factory()->master()->create(['telegram_user_id' => 4009, 'name' => 'Первый']);
+        $master = Master::factory()->for($masterUser)->create(['name' => 'Первый']);
+
+        $this->postCallback($admin->telegram_user_id, "order:reassign:{$order->number}");
+        $this->postCallback($admin->telegram_user_id, "reassign:master:{$order->number}:{$master->id}");
+
+        $order->refresh();
+        $this->assertSame(OrderStatus::ASSIGNED, $order->status);
+        $this->assertSame($master->id, $order->master_id);
+
+        Http::assertSent(function ($request) use ($admin, $order) {
+            if ((int) ($request['chat_id'] ?? 0) !== $admin->telegram_user_id) {
+                return false;
+            }
+
+            $text = $request['text'] ?? '';
+
+            return str_contains($text, "{$order->code()} назначена мастеру Первый")
+                && ! str_contains($text, 'переназначена');
+        });
     }
 
     public function test_master_declines_with_custom_reason_via_pending_input(): void
@@ -187,6 +234,30 @@ class OrderDecisionFlowTest extends TestCase
             'comment' => 'Другая причина: Заболел, не смогу приехать',
         ]);
         $this->assertDatabaseCount('pending_inputs', 0);
+    }
+
+    public function test_menu_command_exits_stuck_pending_input_instead_of_being_swallowed_as_its_text(): void
+    {
+        $admin = User::factory()->admin()->create(['telegram_user_id' => 3008]);
+        $masterUser = User::factory()->master()->create(['telegram_user_id' => 4010]);
+        $master = Master::factory()->for($masterUser)->create();
+        $order = $this->makeAssignedOrder($admin, $master);
+
+        $this->postCallback($masterUser->telegram_user_id, "order:decline:{$order->number}");
+        $this->postCallback($masterUser->telegram_user_id, "order:decline_reason:{$order->number}:OTHER");
+        $this->assertDatabaseHas('pending_inputs', ['user_id' => $masterUser->id, 'kind' => 'order_decline_reason']);
+
+        // Раньше любой текст здесь, включая нажатие кнопки меню, уходил прямиком
+        // в declineCustomReasonText() как если бы это была причина отказа —
+        // тот же класс тупика, что и с черновиком заявки, просто на PendingInput.
+        $this->postMessage($masterUser->telegram_user_id, 'Мои активные');
+
+        $this->assertDatabaseCount('pending_inputs', 0);
+        $order->refresh();
+        $this->assertSame(OrderStatus::ASSIGNED, $order->status);
+
+        Http::assertSent(fn ($request) => str_contains($request['text'] ?? '', 'Текущее действие отменено'));
+        Http::assertSent(fn ($request) => str_contains($request['text'] ?? '', 'Активных заказов нет'));
     }
 
     public function test_master_cannot_trigger_reassign(): void

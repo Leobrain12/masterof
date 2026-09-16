@@ -64,6 +64,12 @@ class OrderReassignFlow
             return;
         }
 
+        // MASTER_DECLINED сохраняет master_id отказавшегося (см. OrderDecisionFlow) —
+        // до transition() это единственный способ отличить "впервые назначаем" (NEW)
+        // от "назначаем взамен" (после отказа), чтобы не писать "переназначена" там,
+        // где мастера раньше не было вообще.
+        $wasReassignment = $order->master_id !== null;
+
         try {
             $order = $this->statusMachine->transition(
                 $order,
@@ -79,7 +85,7 @@ class OrderReassignFlow
 
         $order->load('master.user');
 
-        $this->notifier->reassignedByAdmin($order, $admin);
+        $this->notifier->reassignedByAdmin($order, $admin, $wasReassignment);
         $this->notifier->assignedToMaster($order);
     }
 

@@ -24,16 +24,32 @@ class BotMenu
      */
     public function keyboardFor(User $user): array
     {
-        $rows = match ($user->role) {
-            UserRole::SUPERADMIN, UserRole::ADMIN => $this->adminRows($user),
-            UserRole::MASTER => $this->masterRows(),
-        };
-
         return [
-            'keyboard' => $rows,
+            'keyboard' => $this->rowsFor($user),
             'resize_keyboard' => true,
             'is_persistent' => true,
         ];
+    }
+
+    /**
+     * Текст совпадает с одной из кнопок главного меню этой роли — используется
+     * диспетчером апдейтов как запасной выход из активного сценария (черновик
+     * заявки, PendingInput), чтобы нажатие кнопки меню не терялось в его вводе.
+     */
+    public function isMenuCommand(User $user, string $text): bool
+    {
+        return in_array($text, array_merge(...$this->rowsFor($user)), true);
+    }
+
+    /**
+     * @return array<int, array<int, string>>
+     */
+    private function rowsFor(User $user): array
+    {
+        return match ($user->role) {
+            UserRole::SUPERADMIN, UserRole::ADMIN => $this->adminRows($user),
+            UserRole::MASTER => $this->masterRows(),
+        };
     }
 
     /**

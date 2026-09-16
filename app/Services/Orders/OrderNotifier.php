@@ -73,11 +73,13 @@ class OrderNotifier
         ]);
     }
 
-    public function reassignedByAdmin(Order $order, User $admin): void
+    public function reassignedByAdmin(Order $order, User $admin, bool $wasReassignment): void
     {
+        $verb = $wasReassignment ? 'переназначена' : 'назначена';
+
         $this->telegram->sendMessage(
             $admin->telegram_user_id,
-            "Заявка {$order->code()} переназначена мастеру {$order->master->name}."
+            "Заявка {$order->code()} {$verb} мастеру {$order->master->name}."
         );
     }
 
