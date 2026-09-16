@@ -6,6 +6,7 @@ use App\Enums\OrderStatus;
 use App\Models\Order;
 use App\Models\User;
 use App\Services\Telegram\TelegramClient;
+use Carbon\CarbonInterface;
 
 /**
  * Единый экран активной заявки мастера (ТЗ п.23, F13) — состав кнопок зависит
@@ -25,6 +26,33 @@ class MasterOrderScreen
         OrderStatus::IN_PROGRESS,
         OrderStatus::WAITING_PART,
     ];
+
+    /**
+     * Расписание на день (today/tomorrow) не должно включать заявки, от
+     * которых этот же мастер отказался или которые закрыты не в его пользу —
+     * master_id ОСТАЁТСЯ на отказавшемся мастере и после MASTER_DECLINED
+     * (см. vault/Решения.md#«Назначена» vs «переназначена»), иначе отказанная
+     * заявка утекла бы обратно в собственное «Сегодня» этого же мастера.
+     *
+     * @var list<OrderStatus>
+     */
+    private const SCHEDULE_EXCLUDED_STATUSES = [
+        OrderStatus::MASTER_DECLINED,
+        OrderStatus::CUSTOMER_CANCELLED,
+        OrderStatus::UNREPAIRABLE,
+        OrderStatus::NO_CONTACT,
+        OrderStatus::CANCELLED,
+    ];
+
+    /**
+     * @var list<OrderStatus>
+     */
+    private const HISTORY_STATUSES = [
+        OrderStatus::COMPLETED,
+        OrderStatus::PAID,
+    ];
+
+    private const HISTORY_LIMIT = 20;
 
     public function __construct(
         private readonly TelegramClient $telegram,
@@ -50,6 +78,77 @@ class MasterOrderScreen
 
         if ($orders->isEmpty()) {
             $this->telegram->sendMessage($chatId, 'Активных заказов нет.');
+
+            return;
+        }
+
+        foreach ($orders as $order) {
+            $this->sendCard($chatId, $order);
+        }
+    }
+
+    public function today(User $masterUser, int $chatId): void
+    {
+        $this->sendSchedule($masterUser, $chatId, now(), 'На сегодня заявок нет.');
+    }
+
+    public function tomorrow(User $masterUser, int $chatId): void
+    {
+        $this->sendSchedule($masterUser, $chatId, now()->addDay(), 'На завтра заявок нет.');
+    }
+
+    public function history(User $masterUser, int $chatId): void
+    {
+        $master = $masterUser->master;
+
+        if (! $master) {
+            $this->telegram->sendMessage($chatId, 'Ты не привязан ни к одному профилю мастера.');
+
+            return;
+        }
+
+        $orders = Order::query()
+            ->with(['applianceType', 'brand', 'master', 'warrantyParent'])
+            ->where('master_id', $master->id)
+            ->whereIn('status', array_map(fn (OrderStatus $s) => $s->value, self::HISTORY_STATUSES))
+            ->orderByDesc('visit_date')
+            ->limit(self::HISTORY_LIMIT)
+            ->get();
+
+        if ($orders->isEmpty()) {
+            $this->telegram->sendMessage($chatId, 'История пуста.');
+
+            return;
+        }
+
+        foreach ($orders as $order) {
+            $this->sendCard($chatId, $order);
+        }
+    }
+
+    private function sendSchedule(User $masterUser, int $chatId, CarbonInterface $date, string $emptyMessage): void
+    {
+        $master = $masterUser->master;
+
+        if (! $master) {
+            $this->telegram->sendMessage($chatId, 'Ты не привязан ни к одному профилю мастера.');
+
+            return;
+        }
+
+        $orders = Order::query()
+            ->with(['applianceType', 'brand', 'master', 'warrantyParent'])
+            ->where('master_id', $master->id)
+            // whereDate(), не where() — visit_date хранится как полный datetime
+            // (формат SQLite-грамматики по умолчанию для date-cast), точное
+            // строковое сравнение с "Y-m-d" никогда бы не совпало.
+            ->whereDate('visit_date', $date->toDateString())
+            ->whereNotIn('status', array_map(fn (OrderStatus $s) => $s->value, self::SCHEDULE_EXCLUDED_STATUSES))
+            ->orderBy('time_slot_label')
+            ->get();
+
+        if ($orders->isEmpty()) {
+            $this->telegram->sendMessage($chatId, $emptyMessage);
 
             return;
         }

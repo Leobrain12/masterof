@@ -181,6 +181,24 @@ class UpdateHandler
             return;
         }
 
+        if ($text === 'Сегодня') {
+            $this->masterScreen->today($user, $chatId);
+
+            return;
+        }
+
+        if ($text === 'Завтра') {
+            $this->masterScreen->tomorrow($user, $chatId);
+
+            return;
+        }
+
+        if ($text === 'История') {
+            $this->masterScreen->history($user, $chatId);
+
+            return;
+        }
+
         if ($text === 'Моя статистика') {
             $this->statsFlow->promptPeriod($chatId);
 
