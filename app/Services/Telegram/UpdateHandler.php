@@ -10,6 +10,7 @@ use App\Services\Orders\ContactAttemptFlow;
 use App\Services\Orders\DiagnosisFlow;
 use App\Services\Orders\FieldProgressFlow;
 use App\Services\Orders\MasterOrderScreen;
+use App\Services\Orders\MasterRosterScreen;
 use App\Services\Orders\MediaCollectionFlow;
 use App\Services\Orders\MediaViewer;
 use App\Services\Orders\OrderDecisionFlow;
@@ -42,6 +43,7 @@ class UpdateHandler
         private readonly OrderDecisionFlow $decisionFlow,
         private readonly OrderReassignFlow $reassignFlow,
         private readonly OrderListScreens $listScreens,
+        private readonly MasterRosterScreen $masterRoster,
         private readonly MasterOrderScreen $masterScreen,
         private readonly FieldProgressFlow $fieldFlow,
         private readonly DiagnosisFlow $diagnosisFlow,
@@ -164,6 +166,7 @@ class UpdateHandler
                 'Нераспределённые' => $this->listScreens->unassigned($chatId),
                 'Активные' => $this->listScreens->active($chatId),
                 'Сегодня' => $this->listScreens->today($chatId),
+                'Мастера' => $this->masterRoster->list($chatId),
                 'Поиск' => $this->listScreens->promptSearch($user, $chatId),
                 'Статистика' => $this->statsFlow->promptPeriod($chatId),
                 default => $this->telegram->sendMessage($chatId, '🚧 Этот экран появится в одной из следующих фаз.'),
