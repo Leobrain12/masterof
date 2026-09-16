@@ -34,6 +34,10 @@ class UserManagementScreen
                 $this->sendUserCard($chatId, $user);
             }
         }
+
+        $this->telegram->sendMessage($chatId, 'Завести нового мастера:', [
+            'inline_keyboard' => [[['text' => '➕ Добавить мастера', 'callback_data' => 'users:add_master']]],
+        ]);
     }
 
     public function toggle(User $admin, int $chatId, string $targetUserId): void

@@ -25,6 +25,7 @@ use App\Services\Orders\PriceApprovalFlow;
 use App\Services\Orders\StatsFlow;
 use App\Services\Orders\WarrantyReturnFlow;
 use App\Services\Orders\WorkReportFlow;
+use App\Services\Users\MasterRegistrationFlow;
 use App\Services\Users\UserManagementScreen;
 
 /**
@@ -60,6 +61,7 @@ class UpdateHandler
         private readonly StatsFlow $statsFlow,
         private readonly WarrantyReturnFlow $warrantyFlow,
         private readonly UserManagementScreen $userScreen,
+        private readonly MasterRegistrationFlow $masterRegFlow,
     ) {}
 
     /**
@@ -149,6 +151,7 @@ class UpdateHandler
                     'stats_period' => $this->statsFlow->handleCustomText($user, $chatId, $pending, $text),
                     'warranty_return' => $this->warrantyFlow->handle($user, $pending, $chatId, $text, null),
                     'order_search' => $this->listScreens->handleSearchText($user, $pending, $chatId, $text),
+                    'master_registration' => $this->masterRegFlow->handle($user, $pending, $chatId, $text, null),
                     default => $pending->delete(),
                 };
 
@@ -335,6 +338,22 @@ class UpdateHandler
 
             if (($parts[1] ?? null) === 'toggle' && isset($parts[2])) {
                 $this->userScreen->toggle($user, $chatId, $parts[2]);
+            } elseif (($parts[1] ?? null) === 'add_master') {
+                $this->masterRegFlow->start($user, $chatId);
+            }
+
+            return;
+        }
+
+        if ($namespace === 'master_reg') {
+            if (! $user->isSuperadmin()) {
+                return;
+            }
+
+            $pending = $this->requirePending($user, 'master_registration', $chatId, 'Сценарий добавления мастера истёк. Начни заново — «Пользователи» → «Добавить мастера».');
+
+            if ($pending) {
+                $this->masterRegFlow->handle($user, $pending, $chatId, null, substr($data, strlen('master_reg:')));
             }
 
             return;
