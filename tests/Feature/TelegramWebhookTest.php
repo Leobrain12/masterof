@@ -136,9 +136,11 @@ class TelegramWebhookTest extends TestCase
 
         $admin = User::factory()->admin()->create();
 
+        // Все 12 кнопок меню теперь подключены (см. vault/Решения.md#Достроены
+        // 7 заглушек меню) — берём заведомо неизвестный текст, а не кнопку.
         $this->postJson(
             self::WEBHOOK_URL,
-            $this->messageUpdate($admin->telegram_user_id, 'Мастера'),
+            $this->messageUpdate($admin->telegram_user_id, 'Совершенно случайный текст'),
             ['X-Telegram-Bot-Api-Secret-Token' => 'test-secret']
         )->assertOk();
 
