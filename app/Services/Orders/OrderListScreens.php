@@ -4,6 +4,8 @@ namespace App\Services\Orders;
 
 use App\Enums\OrderStatus;
 use App\Models\Order;
+use App\Models\PendingInput;
+use App\Models\User;
 use App\Services\Telegram\TelegramClient;
 
 /**
@@ -14,6 +16,10 @@ use App\Services\Telegram\TelegramClient;
 class OrderListScreens
 {
     private const LIMIT = 15;
+
+    private const SEARCH_LIMIT = 10;
+
+    private const SEARCH_KIND = 'order_search';
 
     /**
      * "Активные" — всё, что не в "Нераспределённые" (NEW/MASTER_DECLINED, ждут
@@ -83,6 +89,73 @@ class OrderListScreens
                 : null;
 
             $this->telegram->sendMessage($chatId, $this->formatter->format($order), $replyMarkup);
+        }
+    }
+
+    /**
+     * Заявки с визитом сегодня, независимо от статуса — расписание на день,
+     * не срез по стадии заказа (для этого уже есть «Активные»).
+     */
+    public function today(int $chatId): void
+    {
+        $orders = Order::query()
+            ->with(['applianceType', 'brand', 'master', 'warrantyParent'])
+            // whereDate(), не where() — visit_date хранится как полный datetime
+            // (формат даты SQLite-грамматики по умолчанию), точное строковое
+            // сравнение с "Y-m-d" никогда бы не совпало.
+            ->whereDate('visit_date', now()->toDateString())
+            ->orderBy('time_slot_label')
+            ->limit(self::LIMIT)
+            ->get();
+
+        if ($orders->isEmpty()) {
+            $this->telegram->sendMessage($chatId, 'На сегодня заявок нет.');
+
+            return;
+        }
+
+        foreach ($orders as $order) {
+            $this->telegram->sendMessage($chatId, $this->formatter->format($order));
+        }
+    }
+
+    public function promptSearch(User $admin, int $chatId): void
+    {
+        PendingInput::query()->updateOrCreate(
+            ['user_id' => $admin->id],
+            ['kind' => self::SEARCH_KIND, 'payload' => [], 'expires_at' => now()->addMinutes(10)]
+        );
+
+        $this->telegram->sendMessage($chatId, 'Номер заявки (#1234) или телефон клиента:');
+    }
+
+    /**
+     * Формат ввода в ТЗ не описан буквально — эвристика: короткая (≤6 цифр)
+     * последовательность цифр это номер заявки, всё остальное — телефон
+     * (сравнивается по подстроке цифр, без учёта формата +7/8/пробелов).
+     */
+    public function handleSearchText(User $admin, PendingInput $pending, int $chatId, string $text): void
+    {
+        $pending->delete();
+
+        $digits = preg_replace('/\D+/', '', $text) ?? '';
+
+        $query = Order::query()->with(['applianceType', 'brand', 'master', 'warrantyParent']);
+
+        $query = $digits !== '' && strlen($digits) <= 6
+            ? $query->where('number', (int) $digits)
+            : $query->where('customer_phone', 'like', '%'.$digits.'%');
+
+        $orders = $query->orderByDesc('created_at')->limit(self::SEARCH_LIMIT)->get();
+
+        if ($orders->isEmpty()) {
+            $this->telegram->sendMessage($chatId, 'Ничего не найдено.');
+
+            return;
+        }
+
+        foreach ($orders as $order) {
+            $this->telegram->sendMessage($chatId, $this->formatter->format($order));
         }
     }
 }

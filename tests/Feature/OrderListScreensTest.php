@@ -39,18 +39,18 @@ class OrderListScreensTest extends TestCase
         ], ['X-Telegram-Bot-Api-Secret-Token' => 'test-secret'])->assertOk();
     }
 
-    private function makeOrder(User $admin, ?Master $master, OrderStatus $status): Order
+    private function makeOrder(User $admin, ?Master $master, OrderStatus $status, ?string $visitDate = null, ?string $phone = null): Order
     {
         $fridge = ApplianceType::where('name', 'Холодильник')->firstOrFail();
         $slot = TimeSlot::first();
 
         $order = Order::create([
             'customer_name' => 'Клиент '.$status->value,
-            'customer_phone' => '+79990001122',
+            'customer_phone' => $phone ?? '+79990001122',
             'appliance_type_id' => $fridge->id,
             'symptom' => 'Не морозит',
             'address' => 'Москва',
-            'visit_date' => now()->toDateString(),
+            'visit_date' => $visitDate ?? now()->toDateString(),
             'time_slot_label' => $slot->label,
             'time_slot_id' => $slot->id,
             'status' => OrderStatus::NEW,
@@ -130,6 +130,73 @@ class OrderListScreensTest extends TestCase
 
         Http::assertSent(fn ($r) => (int) ($r['chat_id'] ?? 0) === $admin->telegram_user_id
             && ($r['text'] ?? '') === 'Нераспределённых заявок нет.'
+        );
+    }
+
+    public function test_today_screen_shows_only_todays_visits_regardless_of_status(): void
+    {
+        $admin = User::factory()->admin()->create(['telegram_user_id' => 5004]);
+
+        $today = $this->makeOrder($admin, null, OrderStatus::NEW, now()->toDateString());
+        $tomorrow = $this->makeOrder($admin, null, OrderStatus::NEW, now()->addDay()->toDateString());
+
+        $this->postMessage($admin->telegram_user_id, 'Сегодня');
+
+        Http::assertSent(fn ($r) => str_contains($r['text'] ?? '', $today->code()));
+        Http::assertNotSent(fn ($r) => str_contains($r['text'] ?? '', $tomorrow->code()));
+    }
+
+    public function test_today_screen_shows_empty_state(): void
+    {
+        $admin = User::factory()->admin()->create(['telegram_user_id' => 5005]);
+
+        $this->postMessage($admin->telegram_user_id, 'Сегодня');
+
+        Http::assertSent(fn ($r) => (int) ($r['chat_id'] ?? 0) === $admin->telegram_user_id
+            && ($r['text'] ?? '') === 'На сегодня заявок нет.'
+        );
+    }
+
+    public function test_search_by_order_number_finds_exact_match_only(): void
+    {
+        $admin = User::factory()->admin()->create(['telegram_user_id' => 5006]);
+
+        $target = $this->makeOrder($admin, null, OrderStatus::NEW);
+        $other = $this->makeOrder($admin, null, OrderStatus::NEW);
+
+        $this->postMessage($admin->telegram_user_id, 'Поиск');
+        $this->assertDatabaseHas('pending_inputs', ['user_id' => $admin->id, 'kind' => 'order_search']);
+
+        $this->postMessage($admin->telegram_user_id, '#'.$target->number);
+
+        $this->assertDatabaseCount('pending_inputs', 0);
+        Http::assertSent(fn ($r) => str_contains($r['text'] ?? '', $target->code()));
+        Http::assertNotSent(fn ($r) => str_contains($r['text'] ?? '', $other->code()));
+    }
+
+    public function test_search_by_phone_matches_substring(): void
+    {
+        $admin = User::factory()->admin()->create(['telegram_user_id' => 5007]);
+
+        $target = $this->makeOrder($admin, null, OrderStatus::NEW, phone: '+79161112233');
+        $other = $this->makeOrder($admin, null, OrderStatus::NEW, phone: '+79995554433');
+
+        $this->postMessage($admin->telegram_user_id, 'Поиск');
+        $this->postMessage($admin->telegram_user_id, '+7 916 111-22-33');
+
+        Http::assertSent(fn ($r) => str_contains($r['text'] ?? '', $target->code()));
+        Http::assertNotSent(fn ($r) => str_contains($r['text'] ?? '', $other->code()));
+    }
+
+    public function test_search_with_no_matches_shows_empty_state(): void
+    {
+        $admin = User::factory()->admin()->create(['telegram_user_id' => 5008]);
+
+        $this->postMessage($admin->telegram_user_id, 'Поиск');
+        $this->postMessage($admin->telegram_user_id, '+79990000000');
+
+        Http::assertSent(fn ($r) => (int) ($r['chat_id'] ?? 0) === $admin->telegram_user_id
+            && ($r['text'] ?? '') === 'Ничего не найдено.'
         );
     }
 }

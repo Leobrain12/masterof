@@ -144,6 +144,7 @@ class UpdateHandler
                     'payment_partial' => $this->paymentFlow->handlePartialAmountText($user, $chatId, $pending, $text),
                     'stats_period' => $this->statsFlow->handleCustomText($user, $chatId, $pending, $text),
                     'warranty_return' => $this->warrantyFlow->handle($user, $pending, $chatId, $text, null),
+                    'order_search' => $this->listScreens->handleSearchText($user, $pending, $chatId, $text),
                     default => $pending->delete(),
                 };
 
@@ -162,6 +163,8 @@ class UpdateHandler
                 'Новая заявка' => $this->draftFlow->start($user, $chatId),
                 'Нераспределённые' => $this->listScreens->unassigned($chatId),
                 'Активные' => $this->listScreens->active($chatId),
+                'Сегодня' => $this->listScreens->today($chatId),
+                'Поиск' => $this->listScreens->promptSearch($user, $chatId),
                 'Статистика' => $this->statsFlow->promptPeriod($chatId),
                 default => $this->telegram->sendMessage($chatId, '🚧 Этот экран появится в одной из следующих фаз.'),
             };
