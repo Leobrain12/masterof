@@ -2,6 +2,7 @@
 
 namespace App\Services\Telegram;
 
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
@@ -18,6 +19,13 @@ class TelegramClient
 
     private string $baseUrl;
 
+    /**
+     * Реальный случай: некоторые хостинги не пускают наружу напрямую до
+     * api.telegram.org (см. vault/Решения.md) — TELEGRAM_PROXY_HOST/PORT/TYPE
+     * в .env, пусто по умолчанию.
+     */
+    private ?string $proxy;
+
     public function __construct(?string $token = null)
     {
         $token ??= config('services.telegram.bot_token');
@@ -28,6 +36,35 @@ class TelegramClient
 
         $this->token = $token;
         $this->baseUrl = "https://api.telegram.org/bot{$token}/";
+        $this->proxy = $this->resolveProxy();
+    }
+
+    private function resolveProxy(): ?string
+    {
+        $host = config('services.telegram.proxy.host');
+        $port = config('services.telegram.proxy.port');
+
+        if (! $host || ! $port) {
+            return null;
+        }
+
+        // socks5h (не socks5) — резолвит DNS через сам прокси, не локально:
+        // локальный DNS мог быть недоступен/подсанкционирован ровно там же,
+        // где недоступен прямой выход до api.telegram.org.
+        $scheme = match (strtolower((string) config('services.telegram.proxy.type', 'socks5h'))) {
+            'http', 'https' => 'http',
+            'socks4' => 'socks4',
+            default => 'socks5h',
+        };
+
+        return "{$scheme}://{$host}:{$port}";
+    }
+
+    private function http(): PendingRequest
+    {
+        $request = Http::asJson();
+
+        return $this->proxy ? $request->withOptions(['proxy' => $this->proxy]) : $request;
     }
 
     /**
@@ -36,7 +73,7 @@ class TelegramClient
      */
     public function call(string $method, array $params = []): array
     {
-        $response = Http::asJson()->post($this->baseUrl.$method, $params);
+        $response = $this->http()->post($this->baseUrl.$method, $params);
 
         if ($response->failed() || ($response->json('ok') !== true)) {
             report(new RuntimeException(
@@ -107,7 +144,7 @@ class TelegramClient
             return null;
         }
 
-        $response = Http::get("https://api.telegram.org/file/bot{$this->token}/{$filePath}");
+        $response = $this->http()->get("https://api.telegram.org/file/bot{$this->token}/{$filePath}");
 
         if ($response->failed()) {
             report(new RuntimeException("Telegram file download failed: {$filePath}"));

@@ -39,6 +39,14 @@ return [
         'bot_token' => env('TELEGRAM_BOT_TOKEN'),
         'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),
         'owner_id' => env('TELEGRAM_OWNER_ID'),
+        // Некоторые хостинги не пускают наружу напрямую до api.telegram.org
+        // (реальный случай — см. vault/Решения.md), тогда нужен прокси.
+        // Пусто по умолчанию — прямое соединение работает в большинстве случаев.
+        'proxy' => [
+            'host' => env('TELEGRAM_PROXY_HOST'),
+            'port' => env('TELEGRAM_PROXY_PORT'),
+            'type' => env('TELEGRAM_PROXY_TYPE', 'socks5h'),
+        ],
     ],
 
     'internal_api' => [
