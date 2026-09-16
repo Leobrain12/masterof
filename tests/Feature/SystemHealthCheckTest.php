@@ -98,6 +98,46 @@ class SystemHealthCheckTest extends TestCase
         Http::assertNotSent(fn ($r) => str_contains($r->url(), 'sendMessage'));
     }
 
+    public function test_queue_on_database_skips_redis_check_even_if_redis_broken(): void
+    {
+        config([
+            'queue.default' => 'database',
+            'database.redis.default.host' => 'this-host-does-not-exist.invalid',
+        ]);
+
+        Http::fake([
+            'api.telegram.org/*getWebhookInfo*' => Http::response([
+                'ok' => true,
+                'result' => ['url' => 'https://example.com/webhook', 'pending_update_count' => 0],
+            ]),
+        ]);
+
+        $this->artisan('system:health-check')->assertExitCode(0);
+    }
+
+    public function test_queue_on_redis_reports_problem_when_redis_unreachable(): void
+    {
+        config([
+            'queue.default' => 'redis',
+            'database.redis.default.host' => 'this-host-does-not-exist.invalid',
+            'services.telegram.owner_id' => 999888777,
+        ]);
+
+        Http::fake([
+            'api.telegram.org/*getWebhookInfo*' => Http::response([
+                'ok' => true,
+                'result' => ['url' => 'https://example.com/webhook', 'pending_update_count' => 0],
+            ]),
+            'api.telegram.org/*' => Http::response(['ok' => true, 'result' => []]),
+        ]);
+
+        $this->artisan('system:health-check')->assertExitCode(1);
+
+        Http::assertSent(fn ($r) => str_contains($r->url(), 'sendMessage')
+            && str_contains($r['text'] ?? '', 'Redis')
+        );
+    }
+
     public function test_large_pending_update_backlog_triggers_alert(): void
     {
         Http::fake([

@@ -6,7 +6,7 @@ Telegram-бот для распределения выездных заказо�
 
 ## Стек
 
-Laravel 13 (PHP 8.4) · PostgreSQL 16 · Redis 7 (очереди) · Docker Compose. Интерфейс — только Telegram-бот, отдельной веб-админки нет.
+Laravel 13 (PHP 8.4) · PostgreSQL 16 · Docker Compose. Интерфейс — только Telegram-бот, отдельной веб-админки нет. Очередь по умолчанию — `database` (Postgres), Redis 7 (`predis`) поддержан и легко включается через `QUEUE_CONNECTION=redis`, но не обязателен, пока нет реальной CRM с заметным объёмом задач (см. vault/Решения.md).
 
 ## Быстрый старт
 
@@ -75,7 +75,7 @@ docker compose exec app php artisan db:restore <файл> --force # восста
 
 ## Мониторинг
 
-`php artisan system:health-check` проверяет вебхук (ошибки, застрявшие апдейты), Redis и БД; при проблеме шлёт алерт `TELEGRAM_OWNER_ID` и репортит в Sentry, если задан `SENTRY_LARAVEL_DSN` (пусто по умолчанию — SDK молчит). Запланирован каждые 15 минут, тот же cron-триггер, что и для бэкапа.
+`php artisan system:health-check` проверяет вебхук/поллинг (ошибки, застрявшие апдейты — учитывает `TELEGRAM_MODE`), очередь (Redis — только если `QUEUE_CONNECTION=redis`) и БД; при проблеме шлёт алерт `TELEGRAM_OWNER_ID` и репортит в Sentry, если задан `SENTRY_LARAVEL_DSN` (пусто по умолчанию — SDK молчит). Запланирован каждые 15 минут, тот же cron-триггер, что и для бэкапа.
 
 ## Rate limiting
 
@@ -121,7 +121,7 @@ GET    /api/v1/stats                      Общая сводка (?from=&to=)
 
 ### Вариант: Dokploy
 
-1. **БД/Redis** — отдельные ресурсы Database (Postgres) и Redis в Dokploy, если ещё не созданы. В их карточках посмотреть **Internal Host** и **Port** (не JDBC-строку, если Dokploy такую показывает для удобства копирования извне — этот формат не понимает Laravel).
+1. **БД** — отдельный ресурс Database (Postgres) в Dokploy, если ещё не создан. В его карточке посмотреть **Internal Host** и **Port** (не JDBC-строку, если Dokploy такую показывает для удобства копирования извне — этот формат не понимает Laravel). Redis — НЕ обязателен на старте: `QUEUE_CONNECTION=database` работает поверх этой же БД (см. vault/Решения.md), заводить отдельный Redis-ресурс — только когда очередь реально станет нагруженной.
 2. **Веб-приложение** — Application → Build Type **Dockerfile**, Docker File — `docker/php/Dockerfile.dokploy`, Docker Context Path — `.`. Репозиторий `Leobrain12/masterof` (приватный — SSH deploy key или GitHub-интеграция в Dokploy, не просто HTTPS-URL). Ветка — `master`, не `main`.
 3. **Переменные окружения** — вкладка Environment. Единственно верный список — `.env.example` в репозитории, не шаблоны из других ботов: разные названия (`DB_USER` вместо `DB_USERNAME`, `SUPERADMIN_TELEGRAM_ID` вместо `TELEGRAM_OWNER_ID` и т.п.) молча не сработают — Laravel их просто не найдёт под именами, которые не совпадают буква в букву. `DB_HOST`/`DB_PORT`/`REDIS_HOST`/`REDIS_PORT` — из шага 1. `APP_KEY` — сгенерировать отдельно (`php artisan key:generate --show` в любом PHP 8.4) и вписать руками, автогенерации на лету здесь не будет.
 4. **Домен** — вкладка Domains: порт `80` (nginx внутри контейнера), домен `your-domain.com`. Dokploy сам добавит нужные Traefik-лейблы и закажет сертификат.
@@ -200,7 +200,7 @@ docker compose -f docker-compose.prod.yml up -d
 - [ ] `INTERNAL_API_KEY` — случайная строка, не значение из этого репозитория.
 - [ ] `MEDIA_DISK_DRIVER=s3` (или другой не-local) — том `storage` переживает передеплой контейнера, но локальный диск всё равно не то же самое, что реальный бэкап медиа (ТЗ п.54, 99).
 - [ ] `SENTRY_LARAVEL_DSN` заведён, если нужен мониторинг за пределами Telegram-алертов.
-- [ ] Очередь поднята — второй Application-ресурс (или `queue`-сервис в compose-вариантах) с `php artisan queue:work --tries=3 --max-time=3600 --sleep=2`. Без него `SyncOrderToCrm` копится в Redis и никогда не выполняется.
+- [ ] Очередь поднята — второй Application-ресурс (или `queue`-сервис в compose-вариантах) с `php artisan queue:work --tries=3 --max-time=3600 --sleep=2`. Без него `SyncOrderToCrm` копится (по умолчанию в таблице `jobs`, `QUEUE_CONNECTION=database` — см. выше) и никогда не выполняется.
 - [ ] Cron поднят (`* * * * * ... schedule:run`) — иначе не будет ни бэкапов, ни health-check, ни prune. В `docker/php/Dockerfile.dokploy` cron-процесса НЕТ (только php-fpm+nginx через supervisor) — на Dokploy нужны либо его Scheduled Jobs, либо host-crontab с SSH-доступом к серверу.
 - [ ] `db:restore` протестирован хотя бы раз на этом окружении (ТЗ п.106).
 - [ ] Юридическая схема передачи ПД клиента мастеру согласована (см. `vault/Открытые вопросы.md`).

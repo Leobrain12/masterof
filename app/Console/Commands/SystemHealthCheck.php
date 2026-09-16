@@ -127,10 +127,21 @@ class SystemHealthCheck extends Command
     }
 
     /**
+     * Redis проверяется, только если очередь реально настроена на него —
+     * QUEUE_CONNECTION=database (по умолчанию, пока нет реальной CRM и объём
+     * задач небольшой, см. vault/Решения.md) работает поверх той же БД, что
+     * уже проверяет checkDatabase(), отдельной проверки не требует. Пинговать
+     * Redis, когда очередь на нём даже не работает, — проверка не того, что
+     * реально используется.
+     *
      * @return list<string>
      */
     private function checkQueue(): array
     {
+        if (config('queue.default') !== 'redis') {
+            return [];
+        }
+
         try {
             Redis::connection()->ping();
         } catch (Throwable $e) {
