@@ -29,11 +29,24 @@ class TelegramPoll extends Command
         $offset = 0;
 
         while (true) {
-            $response = $telegram->call('getUpdates', [
-                'offset' => $offset,
-                'timeout' => 30,
-                'allowed_updates' => ['message', 'callback_query'],
-            ]);
+            try {
+                $response = $telegram->call('getUpdates', [
+                    'offset' => $offset,
+                    'timeout' => 30,
+                    'allowed_updates' => ['message', 'callback_query'],
+                ]);
+            } catch (\Throwable $e) {
+                // Реальный инцидент: одиночный сетевой таймаут/сбой прокси на
+                // getUpdates (см. TelegramClient::http()) раньше валил весь процесс —
+                // контейнер уходил в "exited". В long polling один неудачный цикл —
+                // не повод останавливать бота, следующая итерация просто повторит
+                // запрос с тем же offset (апдейты не потеряются). Небольшая пауза —
+                // чтобы устойчивый (не разовый) сбой сети не крутил цикл вхолостую.
+                report($e);
+                sleep(2);
+
+                continue;
+            }
 
             foreach ($response['result'] ?? [] as $update) {
                 $offset = $update['update_id'] + 1;

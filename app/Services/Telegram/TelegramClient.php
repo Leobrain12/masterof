@@ -68,9 +68,20 @@ class TelegramClient
         return "{$scheme}://{$auth}{$host}:{$port}";
     }
 
+    /**
+     * 35s — не произвольное число: getUpdates в long-polling режиме (TelegramPoll)
+     * просит Telegram держать соединение открытым до 30с ('timeout' => 30). Laravel
+     * Http-клиент по умолчанию сам обрывает запрос через 30с — гонка, которую клиент
+     * иногда проигрывает буквально на миллисекунды ("cURL error 28: Operation timed
+     * out after 30001 milliseconds"), и это НЕ ловится ($response->failed() тут не
+     * при чём — соединение оборвано, ответа нет вообще). Раньше это ронялось наружу
+     * необработанным и валило весь процесс (контейнер уходил в exited) — реальный
+     * инцидент на проде при первом живом запуске polling. 35с — запас над 30с
+     * long-poll, с большинством остальных вызовов (sendMessage и т.п.) не связан.
+     */
     private function http(): PendingRequest
     {
-        $request = Http::asJson();
+        $request = Http::asJson()->timeout(35);
 
         return $this->proxy ? $request->withOptions(['proxy' => $this->proxy]) : $request;
     }
