@@ -57,7 +57,15 @@ class TelegramClient
             default => 'socks5h',
         };
 
-        return "{$scheme}://{$host}:{$port}";
+        $username = config('services.telegram.proxy.username');
+        $password = config('services.telegram.proxy.password');
+
+        // userinfo в самом URL — так cURL передаёт логин/пароль для прокси
+        // (Proxy-Authorization). urlencode — на случай спецсимволов в пароле,
+        // которые иначе разъехались бы с разбором URL.
+        $auth = $username ? rawurlencode($username).':'.rawurlencode((string) $password).'@' : '';
+
+        return "{$scheme}://{$auth}{$host}:{$port}";
     }
 
     private function http(): PendingRequest

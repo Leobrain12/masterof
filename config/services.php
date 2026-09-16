@@ -46,6 +46,9 @@ return [
             'host' => env('TELEGRAM_PROXY_HOST'),
             'port' => env('TELEGRAM_PROXY_PORT'),
             'type' => env('TELEGRAM_PROXY_TYPE', 'socks5h'),
+            // Опционально — публичные прокси часто требуют логин/пароль.
+            'username' => env('TELEGRAM_PROXY_USERNAME'),
+            'password' => env('TELEGRAM_PROXY_PASSWORD'),
         ],
     ],
 

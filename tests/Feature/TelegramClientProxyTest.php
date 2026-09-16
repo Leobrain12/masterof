@@ -52,4 +52,59 @@ class TelegramClientProxyTest extends TestCase
 
         $this->assertTrue($result['ok']);
     }
+
+    /**
+     * @return string
+     */
+    private function resolveProxyOf(TelegramClient $client)
+    {
+        $method = new \ReflectionMethod($client, 'resolveProxy');
+
+        return $method->invoke($client);
+    }
+
+    public function test_proxy_url_embeds_urlencoded_credentials(): void
+    {
+        config(['services.telegram.proxy' => [
+            'host' => '209.50.160.133',
+            'port' => '3129',
+            'type' => 'http',
+            'username' => '075951frpvgu',
+            'password' => 'nlhkm975clzq54i',
+        ]]);
+
+        $proxy = $this->resolveProxyOf(new TelegramClient('test-token'));
+
+        $this->assertSame('http://075951frpvgu:nlhkm975clzq54i@209.50.160.133:3129', $proxy);
+    }
+
+    public function test_proxy_credential_with_special_characters_is_urlencoded(): void
+    {
+        config(['services.telegram.proxy' => [
+            'host' => 'proxy.example.com',
+            'port' => '1080',
+            'type' => 'socks5h',
+            'username' => 'user@name',
+            'password' => 'p@ss:word/1',
+        ]]);
+
+        $proxy = $this->resolveProxyOf(new TelegramClient('test-token'));
+
+        $this->assertSame('socks5h://user%40name:p%40ss%3Aword%2F1@proxy.example.com:1080', $proxy);
+    }
+
+    public function test_proxy_without_credentials_has_no_userinfo(): void
+    {
+        config(['services.telegram.proxy' => [
+            'host' => '144.126.197.184',
+            'port' => '1080',
+            'type' => 'socks5h',
+            'username' => null,
+            'password' => null,
+        ]]);
+
+        $proxy = $this->resolveProxyOf(new TelegramClient('test-token'));
+
+        $this->assertSame('socks5h://144.126.197.184:1080', $proxy);
+    }
 }
