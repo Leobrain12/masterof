@@ -25,6 +25,7 @@ use App\Services\Orders\PriceApprovalFlow;
 use App\Services\Orders\StatsFlow;
 use App\Services\Orders\WarrantyReturnFlow;
 use App\Services\Orders\WorkReportFlow;
+use App\Services\Users\UserManagementScreen;
 
 /**
  * Общая логика обработки одного Telegram-апдейта — используется и вебхуком
@@ -58,6 +59,7 @@ class UpdateHandler
         private readonly MediaViewer $mediaViewer,
         private readonly StatsFlow $statsFlow,
         private readonly WarrantyReturnFlow $warrantyFlow,
+        private readonly UserManagementScreen $userScreen,
     ) {}
 
     /**
@@ -169,6 +171,9 @@ class UpdateHandler
                 'Мастера' => $this->masterRoster->list($chatId),
                 'Поиск' => $this->listScreens->promptSearch($user, $chatId),
                 'Статистика' => $this->statsFlow->promptPeriod($chatId),
+                'Пользователи' => $user->isSuperadmin()
+                    ? $this->userScreen->list($chatId)
+                    : $this->telegram->sendMessage($chatId, '🚧 Этот экран появится в одной из следующих фаз.'),
                 default => $this->telegram->sendMessage($chatId, '🚧 Этот экран появится в одной из следующих фаз.'),
             };
 
@@ -319,6 +324,18 @@ class UpdateHandler
 
         if ($namespace === 'order') {
             $this->handleOrderCallback($user, $chatId, $parts);
+
+            return;
+        }
+
+        if ($namespace === 'users') {
+            if (! $user->isSuperadmin()) {
+                return;
+            }
+
+            if (($parts[1] ?? null) === 'toggle' && isset($parts[2])) {
+                $this->userScreen->toggle($user, $chatId, $parts[2]);
+            }
 
             return;
         }
