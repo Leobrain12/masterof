@@ -25,6 +25,7 @@ RUN apk add --no-cache \
     && apk del $PHPIZE_DEPS
 
 COPY docker/php/opcache-prod.ini /usr/local/etc/php/conf.d/zz-opcache.ini
+COPY docker/php/uploads.ini /usr/local/etc/php/conf.d/zz-uploads.ini
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www

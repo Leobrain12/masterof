@@ -39,6 +39,12 @@ return [
         'bot_token' => env('TELEGRAM_BOT_TOKEN'),
         'webhook_secret' => env('TELEGRAM_WEBHOOK_SECRET'),
         'owner_id' => env('TELEGRAM_OWNER_ID'),
+        // webhook (по умолчанию) — апдейты приходят на WebhookController. polling —
+        // telegram:poll сам удаляет вебхук при старте (реальный случай: хостинг,
+        // куда Telegram не может достучаться входящим соединением, см. vault/Решения.md).
+        // Влияет только на system:health-check — в polling-режиме пустой url вебхука
+        // ожидаем, а не поломка, см. SystemHealthCheck::checkWebhook().
+        'mode' => env('TELEGRAM_MODE', 'webhook'),
         // Некоторые хостинги не пускают наружу напрямую до api.telegram.org
         // (реальный случай — см. vault/Решения.md), тогда нужен прокси.
         // Пусто по умолчанию — прямое соединение работает в большинстве случаев.

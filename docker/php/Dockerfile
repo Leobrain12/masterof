@@ -22,6 +22,8 @@ RUN apk add --no-cache \
     && docker-php-ext-install pdo pdo_pgsql mbstring bcmath intl zip \
     && apk del $PHPIZE_DEPS
 
+COPY docker/php/uploads.ini /usr/local/etc/php/conf.d/zz-uploads.ini
+
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www

@@ -132,7 +132,8 @@ GET    /api/v1/stats                      Общая сводка (?from=&to=)
    php artisan db:seed --class=OwnerSeeder
    ```
 7. **Cron** — если у Dokploy на этой версии есть Scheduled Jobs, завести туда `php artisan schedule:run` раз в минуту в веб-контейнере; если нет — обычный host-crontab (см. ниже), если есть SSH-доступ к серверу помимо самого Dokploy.
-8. Дальше — как в любом варианте: проверить `/up`, поставить вебхук (см. «Cron на хосте» / команду `telegram:webhook set` ниже).
+8. **Апдейты от Telegram**: по умолчанию — вебхук, см. шаг 4 (Домен) + `telegram:webhook set` ниже. Если хостинг блокирует ВХОДЯЩИЕ соединения от Telegram (реальный случай, см. vault/Решения.md — `getWebhookInfo` показывает `last_error_message: "Connection timed out"` при полностью рабочем домене/TLS), нужен третий Application-ресурс из ТОГО ЖЕ репозитория и Dockerfile, командой `php artisan telegram:poll`, без Domain — и обязательно `TELEGRAM_MODE=polling` в Environment ВСЕХ трёх ресурсов (веб/очередь/poll), иначе `system:health-check` будет слать ложные алерты "вебхук не установлен" каждые 15 минут.
+9. Дальше — как в любом варианте: проверить `/up`, и либо поставить вебхук (`telegram:webhook set`), либо убедиться, что `telegram:poll` в логах третьего ресурса пишет "Webhook удалён, слушаю апдейты".
 
 Первый прогон вместе — часть вещей (точное название полей в UI, доступен ли SSH к хосту отдельно от Dokploy) выяснится по ходу, план выше — отправная точка, не точная инструкция клик-в-клик.
 
@@ -194,12 +195,13 @@ docker compose -f docker-compose.prod.yml up -d
 Перед тем как пускать реальный поток заказов:
 
 - [ ] `APP_ENV=production`, `APP_DEBUG=false` — иначе исключения показывают трассировку и потенциально данные запроса.
-- [ ] `TELEGRAM_WEBHOOK_SECRET` — случайная строка, не значение из этого репозитория.
-- [ ] `INTERNAL_API_KEY` — то же самое.
-- [ ] TLS настроен (Caddy/nginx+certbot/управляемый балансировщик — см. выше), вебхук установлен на HTTPS-адрес (`telegram:webhook set`), не polling.
+- [ ] TLS настроен (Caddy/nginx+certbot/Dokploy Traefik — см. выше).
+- [ ] Апдейты доходят: либо `TELEGRAM_MODE=webhook` (по умолчанию) + `TELEGRAM_WEBHOOK_SECRET` — случайная строка, не значение из этого репозитория, + `telegram:webhook set` на HTTPS-адрес; либо `TELEGRAM_MODE=polling` + третий Application-ресурс с `php artisan telegram:poll` — если хостинг блокирует ВХОДЯЩИЕ соединения от Telegram (реальный случай, см. vault/Решения.md). Несовпадение `TELEGRAM_MODE` с реальным режимом — ложные алерты либо тишина от `system:health-check`.
+- [ ] `INTERNAL_API_KEY` — случайная строка, не значение из этого репозитория.
 - [ ] `MEDIA_DISK_DRIVER=s3` (или другой не-local) — том `storage` переживает передеплой контейнера, но локальный диск всё равно не то же самое, что реальный бэкап медиа (ТЗ п.54, 99).
 - [ ] `SENTRY_LARAVEL_DSN` заведён, если нужен мониторинг за пределами Telegram-алертов.
-- [ ] Cron поднят (`* * * * * ... schedule:run`) — иначе не будет ни бэкапов, ни health-check, ни prune.
+- [ ] Очередь поднята — второй Application-ресурс (или `queue`-сервис в compose-вариантах) с `php artisan queue:work --tries=3 --max-time=3600 --sleep=2`. Без него `SyncOrderToCrm` копится в Redis и никогда не выполняется.
+- [ ] Cron поднят (`* * * * * ... schedule:run`) — иначе не будет ни бэкапов, ни health-check, ни prune. В `docker/php/Dockerfile.dokploy` cron-процесса НЕТ (только php-fpm+nginx через supervisor) — на Dokploy нужны либо его Scheduled Jobs, либо host-crontab с SSH-доступом к серверу.
 - [ ] `db:restore` протестирован хотя бы раз на этом окружении (ТЗ п.106).
 - [ ] Юридическая схема передачи ПД клиента мастеру согласована (см. `vault/Открытые вопросы.md`).
 

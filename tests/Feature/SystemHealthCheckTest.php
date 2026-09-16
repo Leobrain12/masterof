@@ -82,6 +82,22 @@ class SystemHealthCheckTest extends TestCase
         );
     }
 
+    public function test_polling_mode_skips_webhook_check_even_when_webhook_empty(): void
+    {
+        config(['services.telegram.mode' => 'polling', 'services.telegram.owner_id' => 999888777]);
+
+        Http::fake([
+            'api.telegram.org/*getWebhookInfo*' => Http::response([
+                'ok' => true,
+                'result' => ['url' => '', 'pending_update_count' => 0],
+            ]),
+        ]);
+
+        $this->artisan('system:health-check')->assertExitCode(0);
+
+        Http::assertNotSent(fn ($r) => str_contains($r->url(), 'sendMessage'));
+    }
+
     public function test_large_pending_update_backlog_triggers_alert(): void
     {
         Http::fake([

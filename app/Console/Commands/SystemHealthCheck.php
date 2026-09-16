@@ -81,6 +81,14 @@ class SystemHealthCheck extends Command
             return [];
         }
 
+        // В polling-режиме telegram:poll сам удаляет вебхук при старте (ТЗ п.94,
+        // реальный случай — сеть блокирует входящие от Telegram, см. TelegramPoll
+        // и vault/Решения.md) — пустой url тут ожидаемое состояние, а не поломка.
+        // Без этой проверки health-check слал бы ложный алерт каждые 15 минут.
+        if (config('services.telegram.mode') === 'polling') {
+            return [];
+        }
+
         try {
             $info = $telegram->getWebhookInfo()['result'] ?? null;
         } catch (Throwable $e) {
